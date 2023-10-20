@@ -46,8 +46,6 @@ impl Symbol {
     }
 }
 
-const INPUT: &str = "(+ 223 1 (* (as) 3.34 2) \"hello\")";
-
 enum LexerState {
     None, // single char symbols
     NumberLiteral(String),
@@ -55,52 +53,42 @@ enum LexerState {
     Identifier(String),
 }
 
-fn lex(s: &str) -> Vec<Symbol> {
-    if !s.starts_with('(') {
-        panic!("Input must start with '('")
-    }
-
+fn lex(s: String) -> Vec<Symbol> {
     let mut state: LexerState = LexerState::None;
 
     let mut symbols: Vec<Symbol> = vec![];
 
-    for c in s.chars() {
+    let mut i = 0;
+    while let Some(c) = s.chars().nth(i) {
         match state {
             LexerState::Identifier(ref mut s) => {
                 if c.is_alphanumeric() {
                     s.push(c);
+                    i += 1;
                 } else {
                     symbols.push(Symbol::Identifier(s.to_string()));
-
-                    if ['(', ')', ','].contains(&c) {
-                        symbols.push(Symbol::from_char(c));
-                    }
-
                     state = LexerState::None
                 }
             }
             LexerState::NumberLiteral(ref mut s) => {
                 if c.is_numeric() || c == '.' {
                     s.push(c);
+                    i += 1;
                 } else {
                     if c != ' ' && c != '(' && c != ')' && c != ',' {
                         panic!("Unexpected character in number literal: {}", c);
                     }
                     symbols.push(Symbol::from_numeric(&s));
-
-                    if ['(', ')', ','].contains(&c) {
-                        symbols.push(Symbol::from_char(c));
-                    }
-
                     state = LexerState::None;
                 }
             }
             LexerState::StringLiteral(ref mut s) => {
-                if c == '"' {
+                if c != '"' {
+                    s.push(c);
+                    i += 1;
+                } else {
                     symbols.push(Symbol::StringLiteral(s.to_string()));
                     state = LexerState::None;
-                } else {
-                    s.push(c);
                 }
             }
             LexerState::None => {
@@ -116,6 +104,7 @@ fn lex(s: &str) -> Vec<Symbol> {
                 } else {
                     panic!("Unexpected character: {}", c);
                 }
+                i += 1;
             }
         }
     }
@@ -123,8 +112,11 @@ fn lex(s: &str) -> Vec<Symbol> {
     return symbols;
 }
 
+
+const INPUT: &str = "(+ 223 1 (* (as) 3.34 2) \"hello\")";
+
 fn main() {
-    let lexed = lex(INPUT);
+    let lexed = lex(INPUT.to_owned());
     println!("{:?}", lexed);
 }
 
