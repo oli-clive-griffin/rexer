@@ -1,6 +1,7 @@
 mod lexer;
 mod parser;
 mod interpreter;
+mod runtime_value;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

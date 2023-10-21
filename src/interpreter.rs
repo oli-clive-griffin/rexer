@@ -2,27 +2,7 @@
 
 use crate::parser::{AST, SExpr};
 use crate::lexer::{Literal, NumericLiteral, Operator};
-
-#[derive(Debug, Clone, PartialEq)]
-enum RuntimeValue {
-    Int(i64),
-    Float(f64),
-    Boolean(bool),
-    String(String),
-    // Function ...
-}
-
-impl RuntimeValue {
-    fn from_literal(lit: &Literal) -> RuntimeValue {
-        match lit {
-            Literal::Numeric(n) => match n {
-                NumericLiteral::Int(i) => RuntimeValue::Int(*i),
-                NumericLiteral::Float(f) => RuntimeValue::Float(*f),
-            }
-            Literal::String(s) => RuntimeValue::String(s.clone()),
-        }
-    }
-}
+use crate::runtime_value::RuntimeValue;
 
 // struct Scope {
 //     // could make this a list of hashmaps that's search from the top down
@@ -36,39 +16,33 @@ impl RuntimeValue {
 //     }
 // }
 
+impl RuntimeValue {
+    fn from_literal(lit: &Literal) -> RuntimeValue {
+        match lit {
+            Literal::Numeric(n) => match n {
+                NumericLiteral::Int(i) => RuntimeValue::Int(*i),
+                NumericLiteral::Float(f) => RuntimeValue::Float(*f),
+            }
+            Literal::String(s) => RuntimeValue::String(s.clone()),
+        }
+    }
+}
+
 impl Operator {
     fn execute(&self, args: &[RuntimeValue]) -> RuntimeValue {
         args
             .iter()
             .cloned()
-            .reduce(|acc, val| { self.binary(&acc, &val) })// cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
+            .reduce(|acc, val| { self.binary(acc, val) })// cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
             .unwrap()
     }
 
-    fn binary(&self, a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
-        match (self, a, b) {
-            (Operator::Plus, RuntimeValue::Int(a), RuntimeValue::Int(b)) => RuntimeValue::Int(a + b),
-            (Operator::Plus, RuntimeValue::Float(a), RuntimeValue::Float(b)) => RuntimeValue::Float(a + b),
-            (Operator::Plus, RuntimeValue::Int(a), RuntimeValue::Float(b)) => RuntimeValue::Float(*a as f64 + b),
-            (Operator::Plus, RuntimeValue::Float(a), RuntimeValue::Int(b)) => RuntimeValue::Float(a + *b as f64),
-            (Operator::Plus, RuntimeValue::String(a), RuntimeValue::String(b)) => RuntimeValue::String(a.to_owned() + b),
-
-            (Operator::Divide, RuntimeValue::Int(a), RuntimeValue::Int(b)) => RuntimeValue::Int(a / b),
-            (Operator::Divide, RuntimeValue::Float(a), RuntimeValue::Float(b)) => RuntimeValue::Float(a / b),
-            (Operator::Divide, RuntimeValue::Int(a), RuntimeValue::Float(b)) => RuntimeValue::Float(*a as f64 / b),
-            (Operator::Divide, RuntimeValue::Float(a), RuntimeValue::Int(b)) => RuntimeValue::Float(a / *b as f64),
-
-            (Operator::Multiply, RuntimeValue::Int(a), RuntimeValue::Int(b)) => RuntimeValue::Int(a * b),
-            (Operator::Multiply, RuntimeValue::Float(a), RuntimeValue::Float(b)) => RuntimeValue::Float(a * b),
-            (Operator::Multiply, RuntimeValue::Int(a), RuntimeValue::Float(b)) => RuntimeValue::Float(*a as f64 * b),
-            (Operator::Multiply, RuntimeValue::Float(a), RuntimeValue::Int(b)) => RuntimeValue::Float(a * *b as f64),
-
-            (Operator::Minus, RuntimeValue::Int(a), RuntimeValue::Int(b)) => RuntimeValue::Int(a - b),
-            (Operator::Minus, RuntimeValue::Float(a), RuntimeValue::Float(b)) => RuntimeValue::Float(a - b),
-            (Operator::Minus, RuntimeValue::Int(a), RuntimeValue::Float(b)) => RuntimeValue::Float(*a as f64 - b),
-            (Operator::Minus, RuntimeValue::Float(a), RuntimeValue::Int(b)) => RuntimeValue::Float(a - *b as f64),
-
-            _ => panic!("Cannot perform operation {:?} between values {:?} and {:?}", self, a, b),
+    fn binary(&self, a: RuntimeValue, b: RuntimeValue) -> RuntimeValue {
+        match self {
+            Operator::Plus => a + b,
+            Operator::Divide => a / b,
+            Operator::Multiply => a * b,
+            Operator::Minus => a - b,
         }
     }
 }
