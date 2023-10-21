@@ -4,7 +4,7 @@ pub enum LR {
     Right,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)] // todo revisit Clone, Copy
 pub enum Operator {
     Plus,
     Minus,
@@ -12,62 +12,74 @@ pub enum Operator {
     Divide,
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum NumericLiteral {
+    Float(f32),
+    Int(i32),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Literal {
+    Numeric(NumericLiteral),
+    String(String),
+}
+
 #[derive(Debug, PartialEq)]
-pub enum Symbol {
+pub enum Token {
     Parenthesis(LR),
     Operator(Operator),
-    StringLiteral(String),
-    IntLiteral(i32),
-    FloatLiteral(f32),
+    Literal(Literal),
     Identifier(String),
     Boolean(bool),
     Comma,
 }
 
-impl Symbol {
-    fn from_string(s: &String) -> Symbol {
+impl Token {
+    fn from_string(s: &String) -> Token {
         if s == "true" {
-            return Symbol::Boolean(true);
+            return Token::Boolean(true);
         } else if s == "false" {
-            return Symbol::Boolean(false);
+            return Token::Boolean(false);
         } else {
-            return Symbol::Identifier(s.to_string());
+            return Token::Identifier(s.to_string());
         }
     }
 
-    fn from_numeric(s: &String) -> Symbol {
-        if s.contains('.') {
-            Symbol::FloatLiteral(s.parse::<f32>().expect("Could not parse numeric literal as float"))
-        } else {
-            Symbol::IntLiteral(s.parse::<i32>().expect("Could not parse numeric literal as int"))
-        }
+    fn from_numeric(s: &String) -> Token {
+        Token::Literal(Literal::Numeric(
+            if s.contains('.') {
+                NumericLiteral::Float(s.parse::<f32>().expect("Could not parse numeric literal as float"))
+            } else {
+                NumericLiteral::Int(s.parse::<i32>().expect("Could not parse numeric literal as int"))
+            }
+        ))
     }
 
-    fn from_char(c: char) -> Symbol {
+    fn from_char(c: char) -> Token {
         match c {
-            '(' => Symbol::Parenthesis(LR::Left),
-            ')' => Symbol::Parenthesis(LR::Right),
-            ',' => Symbol::Comma,
-            '+' => Symbol::Operator(Operator::Plus),
-            '-' => Symbol::Operator(Operator::Minus),
-            '*' => Symbol::Operator(Operator::Multiply),
-            '/' => Symbol::Operator(Operator::Divide),
+            '(' => Token::Parenthesis(LR::Left),
+            ')' => Token::Parenthesis(LR::Right),
+            ',' => Token::Comma,
+            '+' => Token::Operator(Operator::Plus),
+            '-' => Token::Operator(Operator::Minus),
+            '*' => Token::Operator(Operator::Multiply),
+            '/' => Token::Operator(Operator::Divide),
             _ => panic!("Unexpected char: {}", c),
         }
     }
 }
 
 enum LexerState {
-    None, // single char symbols
+    None, // single char tokens
     NumberLiteral(String),
     StringLiteral(String), // no escaping, could do by `StringLiteral(Escaped)`
     Identifier(String), // could resolve to a keyword, identifier, or boolean
 }
 
-pub fn lex(s: String) -> Vec<Symbol> {
+pub fn lex(s: String) -> Vec<Token> {
     let mut state: LexerState = LexerState::None;
 
-    let mut symbols: Vec<Symbol> = vec![];
+    let mut tokens: Vec<Token> = vec![];
 
     let chars = s.chars().collect::<Vec<_>>();
 
@@ -81,7 +93,7 @@ pub fn lex(s: String) -> Vec<Symbol> {
                     s.push(c);
                     i += 1;
                 } else {
-                    symbols.push(Symbol::from_string(s));
+                    tokens.push(Token::from_string(s));
                     state = LexerState::None
                 }
             }
@@ -93,7 +105,7 @@ pub fn lex(s: String) -> Vec<Symbol> {
                     if c != ' ' && c != '(' && c != ')' && c != ',' {
                         panic!("Unexpected character in number literal: {}", c);
                     }
-                    symbols.push(Symbol::from_numeric(&s));
+                    tokens.push(Token::from_numeric(&s));
                     state = LexerState::None;
                 }
             }
@@ -102,14 +114,14 @@ pub fn lex(s: String) -> Vec<Symbol> {
                     s.push(c);
                     i += 1;
                 } else {
-                    symbols.push(Symbol::StringLiteral(s.to_string()));
+                    tokens.push(Token::Literal(Literal::String(s.to_string())));
                     state = LexerState::None;
                     i += 1;
                 }
             }
             LexerState::None => {
                 if ['(', ')', ',', '+', '-', '*', '/'].contains(&c) {
-                    symbols.push(Symbol::from_char(c));
+                    tokens.push(Token::from_char(c));
                 } else if c == '"' {
                     state = LexerState::StringLiteral(String::new());
                 } else if c.is_numeric() {
@@ -126,13 +138,13 @@ pub fn lex(s: String) -> Vec<Symbol> {
     }
     
     match state {
-        LexerState::Identifier(s) => symbols.push(Symbol::from_string(&s)),
-        LexerState::NumberLiteral(s) => symbols.push(Symbol::from_numeric(&s)),
+        LexerState::Identifier(s) => tokens.push(Token::from_string(&s)),
+        LexerState::NumberLiteral(s) => tokens.push(Token::from_numeric(&s)),
         LexerState::StringLiteral(_) => panic!("Unexpected end of input"),
         LexerState::None => (),
     }
 
-    return symbols;
+    return tokens;
 }
 
 #[cfg(test)]
@@ -142,21 +154,21 @@ mod tests {
     #[test]
     fn test_number_literal() {
         let input = "123".to_string();
-        let expected = vec![Symbol::IntLiteral(123)];
+        let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
         assert_eq!(lex(input), expected);
     }
 
     #[test]
     fn test_string_literal() {
         let input = "\"hello\"".to_string();
-        let expected = vec![Symbol::StringLiteral("hello".to_string())];
+        let expected = vec![Token::Literal(Literal::String("hello".to_string()))];
         assert_eq!(lex(input), expected);
     }
 
     #[test]
     fn test_identifier() {
         let input = "variableName".to_string();
-        let expected = vec![Symbol::Identifier("variableName".to_string())];
+        let expected = vec![Token::Identifier("variableName".to_string())];
         assert_eq!(lex(input), expected);
     }
 
@@ -164,11 +176,11 @@ mod tests {
     fn test_operators() {
         let input = "(+ - *)".to_string();
         let expected = vec![
-            Symbol::Parenthesis(LR::Left),
-            Symbol::Operator(Operator::Plus),
-            Symbol::Operator(Operator::Minus),
-            Symbol::Operator(Operator::Multiply),
-            Symbol::Parenthesis(LR::Right),
+            Token::Parenthesis(LR::Left),
+            Token::Operator(Operator::Plus),
+            Token::Operator(Operator::Minus),
+            Token::Operator(Operator::Multiply),
+            Token::Parenthesis(LR::Right),
         ];
         assert_eq!(lex(input), expected);
     }
@@ -177,11 +189,11 @@ mod tests {
     fn test_mixed_input() {
         let input = "(define x 10)".to_string();
         let expected = vec![
-            Symbol::Parenthesis(LR::Left),
-            Symbol::Identifier("define".to_string()),
-            Symbol::Identifier("x".to_string()),
-            Symbol::IntLiteral(10),
-            Symbol::Parenthesis(LR::Right),
+            Token::Parenthesis(LR::Left),
+            Token::Identifier("define".to_string()),
+            Token::Identifier("x".to_string()),
+            Token::Literal(Literal::Numeric(NumericLiteral::Int(10))),
+            Token::Parenthesis(LR::Right),
         ];
         assert_eq!(lex(input), expected);
     }

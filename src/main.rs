@@ -1,4 +1,5 @@
 mod lexer;
+mod parser;
 
 // const INPUT: &str = "(+ 223 1 (* (as) 3.34 2) \"hello\")";
 const INPUT: &str = "(\"hello\")";
