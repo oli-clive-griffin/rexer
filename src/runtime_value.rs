@@ -1,9 +1,12 @@
 use std::ops;
 
-use crate::{parser::Node, lexer::Operator};
+use crate::{lexer::Operator, parser::Node};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function{ pub params: Vec<String>, pub body: Node }
+pub struct Function {
+    pub params: Vec<String>,
+    pub body: Node,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeValue {
@@ -22,7 +25,7 @@ impl RuntimeValue {
             RuntimeValue::Int(int) => *int != 0,
             RuntimeValue::Float(float) => *float != 0.0,
             RuntimeValue::String(string) => *string != "",
-            RuntimeValue::Function(Function{ params: _, body: _ }) => true,
+            RuntimeValue::Function(Function { params: _, body: _ }) => true,
             RuntimeValue::Op(_) => true,
         }
     }

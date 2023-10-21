@@ -1,4 +1,4 @@
-use crate::lexer::{Token, LR, Operator, Literal};
+use crate::lexer::{Literal, Operator, Token, LR};
 
 #[derive(Debug, PartialEq)]
 pub struct AST {
@@ -15,7 +15,6 @@ pub enum Node {
     Fn,
     If,
     Let,
-
     // impl later:
     // Def,
 }
@@ -46,11 +45,11 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
 
     match first {
         Token::Parenthesis(LR::Left) => {
-                    let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
-                    return (s_expr, i_diff + 1);
+            let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
+            return (s_expr, i_diff + 1);
         }
         Token::Operator(op) => {
-            return (Node::Op(*op), 1) // copied
+            return (Node::Op(*op), 1); // copied
         }
         Token::Literal(lit) => {
             let lit_val = match lit {
@@ -88,18 +87,15 @@ pub fn parse(tokens: Vec<Token>) -> AST {
     return AST { root: s_expr };
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{NumericLiteral, lex};
+    use crate::lexer::{lex, NumericLiteral};
 
     use super::*;
 
     #[test]
     fn test1() {
-        let input = vec![
-            Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))
-        ];
+        let input = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
 
         assert_eq!(
             parse(input).root,
@@ -109,25 +105,19 @@ mod tests {
 
     #[test]
     fn test2() {
-        let AST { root } = parse(lex(
-            &"(+ 1 (- 4 3))".to_string()
-        ));
+        let AST { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
 
         assert_eq!(
             root,
-            Node::List(
-                vec![
-                    Node::Op(Operator::Add),
-                    Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                    Node::List(
-                        vec![
-                            Node::Op(Operator::Sub),
-                            Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-                            Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
-                        ]
-                    )
-                ]
-            )
+            Node::List(vec![
+                Node::Op(Operator::Add),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
+                Node::List(vec![
+                    Node::Op(Operator::Sub),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+                ])
+            ])
         );
     }
 }

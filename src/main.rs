@@ -1,6 +1,6 @@
+mod interpreter;
 mod lexer;
 mod parser;
-mod interpreter;
 mod runtime_value;
 
 fn main() {
@@ -11,7 +11,10 @@ fn main() {
     }
 
     let file_path = &args[1];
-    let contents = std::fs::read_to_string(file_path).expect("Something went wrong reading the file").trim().to_owned();
+    let contents = std::fs::read_to_string(file_path)
+        .expect("Something went wrong reading the file")
+        .trim()
+        .to_owned();
 
     let tokens = lexer::lex(&contents);
     let ast = parser::parse(tokens);

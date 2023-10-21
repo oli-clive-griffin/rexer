@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::parser::{AST, Node};
 use crate::lexer::{Literal, NumericLiteral, Operator};
-use crate::runtime_value::{RuntimeValue, Function};
+use crate::parser::{Node, AST};
+use crate::runtime_value::{Function, RuntimeValue};
 
 struct Scope {
     // could make this a list of hashmaps that's search from the top down
@@ -11,8 +11,10 @@ struct Scope {
 }
 
 impl Scope {
-    fn new () -> Scope {
-        Scope { bindings: HashMap::new() }
+    fn new() -> Scope {
+        Scope {
+            bindings: HashMap::new(),
+        }
     }
 
     fn with_bindings(&self, bindings: Vec<(String, RuntimeValue)>) -> Scope {
@@ -20,7 +22,9 @@ impl Scope {
         for (ident, val) in bindings {
             new_bindings.insert(ident, val);
         }
-        Scope { bindings: new_bindings }
+        Scope {
+            bindings: new_bindings,
+        }
     }
 }
 
@@ -30,7 +34,7 @@ impl RuntimeValue {
             Literal::Numeric(n) => match n {
                 NumericLiteral::Int(i) => RuntimeValue::Int(*i),
                 NumericLiteral::Float(f) => RuntimeValue::Float(*f),
-            }
+            },
             Literal::String(s) => RuntimeValue::String(s.clone()),
         }
     }
@@ -38,10 +42,9 @@ impl RuntimeValue {
 
 impl Operator {
     fn execute(&self, args: &[RuntimeValue]) -> RuntimeValue {
-        args
-            .iter()
+        args.iter()
             .cloned()
-            .reduce(|acc, val| { self.binary(acc, val) })// cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
+            .reduce(|acc, val| self.binary(acc, val)) // cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
             .unwrap()
     }
 
@@ -68,10 +71,7 @@ impl Node {
                     None => panic!("Identifier {} not found in scope", ident),
                 }
             }
-            Node::Fn |
-            Node::If |
-            Node::Let => panic!("should not be parsed as a node"),
-            
+            Node::Fn | Node::If | Node::Let => panic!("should not be parsed as a node"),
         }
     }
 }
@@ -79,29 +79,37 @@ impl Node {
 fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     let first_node = &list[0];
 
-    match first_node { // this is a smell - Fn isnt a real SExpr
+    match first_node {
+        // this is a smell - Fn isnt a real SExpr
         Node::Fn => return eval_fun_dec(list, scope),
         Node::If => return eval_if(list, scope),
         Node::Let => return eval_let(list, scope),
         Node::Ident(ident) => {
             let head_val = scope.bindings.get(ident).unwrap();
+            let args_vals: &[RuntimeValue] = &list[1..]
+                .iter()
+                .map(|arg| arg.eval(scope))
+                .collect::<Vec<RuntimeValue>>();
+
             match head_val {
                 RuntimeValue::Function(func) => {
-                    return evaluation_function(func, &list[1..], scope);
+                    return eval_fun(func, &args_vals, scope);
                 }
                 _ => panic!("Cannot call non-function value"),
             }
         }
-        Node::Op(op) => { // for now only handle operators
-            let rest_val = &list[1..].iter().map(|e| e.eval(scope)).collect::<Vec<RuntimeValue>>();
+        Node::Op(op) => {
+            // for now only handle operators
+            let rest_val = &list[1..]
+                .iter()
+                .map(|e| e.eval(scope))
+                .collect::<Vec<RuntimeValue>>();
             return op.execute(rest_val);
         }
-        Node::Literal(_)
-        | Node::Boolean(_) => panic!(),
-        
-        Node::List(_) => todo!()
-        // Node::Indent(_) => {}
-        // Node::Op(_) => {}
+        Node::Literal(_) | Node::Boolean(_) => panic!(),
+
+        Node::List(_) => todo!(), // Node::Indent(_) => {}
+                                  // Node::Op(_) => {}
     };
 }
 
@@ -119,10 +127,9 @@ fn eval_fun_dec(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
 }
 
 fn eval_let(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    let binding_exprs = &list[1..list.len()-1];
-    let expr = &list[list.len()-1]; // ignore both the let and the expr
-
-    let bindings = generate_bindings(binding_exprs, scope);
+    let binding_exprs = &list[1..list.len() - 1];
+    let expr = &list[list.len() - 1]; // ignore both the let and the expr
+    let bindings = generate_let_bindings(binding_exprs, scope);
     return expr.eval(&scope.with_bindings(bindings));
 }
 
@@ -137,51 +144,57 @@ fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     }
 }
 
-fn evaluation_function(func: &Function, list: &[Node], scope: &Scope) -> RuntimeValue {
-    let _ = func;
-    let _ = list;
-    let _ = scope;
-    todo!()
-}
+fn eval_fun(func: &Function, args: &[RuntimeValue], scope: &Scope) -> RuntimeValue {
+    if func.params.len() != args.len() {
+        panic!("Function called with incorrect number of arguments");
+    }
 
-fn generate_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
-    list
+    // zip the args and params together
+    let bindings = func
+        .params
         .iter()
         .cloned()
-        .map(|node| {
-            match node {
-                Node::List(nodes) => {
-                    if nodes.len() != 2 {
-                        panic!("let binding must be a list of two elements");
-                    }
-                    if let Node::Ident(ident) = &nodes[0] {
-                        let val = &nodes[1].eval(scope);
-                        return (ident.clone(), val.clone());
-                    } else {
-                        panic!("left side of let binding must be an identifier");
-                    }
+        .zip(args.iter().cloned())
+        .collect::<Vec<(String, RuntimeValue)>>();
+
+    return func.body.eval(&scope.with_bindings(bindings));
+}
+
+fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
+    list.iter()
+        .cloned()
+        .map(|node| match node {
+            Node::List(nodes) => {
+                if nodes.len() != 2 {
+                    panic!("let binding must be a list of two elements");
                 }
-                _ => panic!("All bindings must be lists")
+                if let Node::Ident(ident) = &nodes[0] {
+                    let val = &nodes[1].eval(scope);
+                    return (ident.clone(), val.clone());
+                } else {
+                    panic!("left side of let binding must be an identifier");
+                }
             }
+            _ => panic!("All bindings must be lists"),
         })
         .collect::<Vec<(String, RuntimeValue)>>()
 }
 
 fn parse_as_args(expr: &Node) -> Vec<String> {
     if let Node::List(args) = expr {
-        args.iter().map(|e| {
-            if let Node::Ident(ident) = e {
-                ident.clone()
-            } else {
-                panic!("Function arguments must be identifiers")
-            }
-        }).collect::<Vec<String>>()
+        args.iter()
+            .map(|e| {
+                if let Node::Ident(ident) = e {
+                    ident.clone()
+                } else {
+                    panic!("Function arguments must be identifiers")
+                }
+            })
+            .collect::<Vec<String>>()
     } else {
         panic!("Function arguments must be a list")
     }
 }
-
-// fn eval_function
 
 /// for now, assume that the AST is a single SExpr
 /// and just evaluate it
@@ -209,7 +222,7 @@ mod tests {
                 Node::Op(Operator::Add),
                 Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
                 Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-            ])
+            ]),
         };
 
         let output = ast.root.eval(&Scope::new());
@@ -235,7 +248,7 @@ mod tests {
                     Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
                     Node::Literal(Literal::Numeric(NumericLiteral::Float(2.3))),
                 ]),
-            ])
+            ]),
         };
 
         let res = ast.root.eval(&Scope::new());
@@ -256,7 +269,7 @@ mod tests {
                     Node::Ident("x".to_owned()),
                     Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
                 ]),
-            ])
+            ]),
         };
 
         let res = ast.root.eval(&Scope::new());

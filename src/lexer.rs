@@ -46,13 +46,17 @@ impl Token {
     }
 
     fn from_numeric(s: &String) -> Token {
-        Token::Literal(Literal::Numeric(
-            if s.contains('.') {
-                NumericLiteral::Float(s.parse::<f64>().expect("Could not parse numeric literal as float"))
-            } else {
-                NumericLiteral::Int(s.parse::<i64>().expect("Could not parse numeric literal as int"))
-            }
-        ))
+        Token::Literal(Literal::Numeric(if s.contains('.') {
+            NumericLiteral::Float(
+                s.parse::<f64>()
+                    .expect("Could not parse numeric literal as float"),
+            )
+        } else {
+            NumericLiteral::Int(
+                s.parse::<i64>()
+                    .expect("Could not parse numeric literal as int"),
+            )
+        }))
     }
 
     fn from_char(c: char) -> Token {
@@ -73,7 +77,7 @@ enum LexerState {
     None, // single char tokens
     NumberLiteral(String),
     StringLiteral(String), // no escaping, could do by `StringLiteral(Escaped)`
-    Identifier(String), // could resolve to a keyword, identifier, or boolean
+    Identifier(String),    // could resolve to a keyword, identifier, or boolean
 }
 
 pub fn lex(s: &String) -> Vec<Token> {
@@ -136,7 +140,7 @@ pub fn lex(s: &String) -> Vec<Token> {
             }
         }
     }
-    
+
     match state {
         LexerState::Identifier(s) => tokens.push(Token::from_string(&s)),
         LexerState::NumberLiteral(s) => tokens.push(Token::from_numeric(&s)),
@@ -205,4 +209,3 @@ mod tests {
         lex(&input);
     }
 }
-
