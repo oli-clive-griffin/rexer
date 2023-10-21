@@ -5,17 +5,18 @@ pub struct AST {
     pub root: SExpr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SExpr {
     List(Vec<SExpr>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
-    Ident(String),
+    Indent(String),
     Literal(Literal),
     Boolean(bool),
-    Op(Operator)
+    Op(Operator),
+    Fn,
+    If,
+    Let,
+
     // impl later:
-    // Fn,
-    // If,
-    // Let,
     // Def,
 }
 
@@ -59,7 +60,13 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (SExpr, usize) {
             return (SExpr::Literal(lit_val), 1);
         }
         Token::Identifier(ident) => {
-            return (SExpr::Ident(ident.clone()), 1);
+            match ident.as_str() {
+                "fn" => return (SExpr::Fn, 1),
+                "if" => return (SExpr::If, 1),
+                "let" => return (SExpr::Let, 1),
+                _ => (),
+            }
+            return (SExpr::Indent(ident.clone()), 1);
         }
         Token::Boolean(bool) => {
             return (SExpr::Boolean(*bool), 1);

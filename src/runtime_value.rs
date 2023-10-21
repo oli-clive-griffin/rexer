@@ -1,12 +1,29 @@
 use std::ops;
 
+use crate::parser::SExpr;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function{ pub params: Vec<String>, pub body: SExpr }
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeValue {
     Int(i64),
     Float(f64),
     Boolean(bool),
     String(String),
-    // Function ...
+    Function(Function),
+}
+
+impl RuntimeValue {
+    pub fn bool(&self) -> bool {
+        match self {
+            RuntimeValue::Boolean(b) => *b,
+            RuntimeValue::Int(int) => *int != 0,
+            RuntimeValue::Float(float) => *float != 0.0,
+            RuntimeValue::String(string) => *string != "",
+            RuntimeValue::Function(Function{ params: _, body: _ }) => true,
+        }
+    }
 }
 
 impl ops::Add for RuntimeValue {
