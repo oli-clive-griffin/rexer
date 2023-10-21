@@ -37,7 +37,7 @@ fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
         i += i_diff;
     }
 
-    return (Node::List(list), i);
+    (Node::List(list), i)
 }
 
 fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
@@ -46,17 +46,17 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
     match first {
         Token::Parenthesis(LR::Left) => {
             let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
-            return (s_expr, i_diff + 1);
+            (s_expr, i_diff + 1)
         }
         Token::Operator(op) => {
-            return (Node::Op(*op), 1); // copied
+            (Node::Op(*op), 1) // copied
         }
         Token::Literal(lit) => {
             let lit_val = match lit {
                 Literal::Numeric(val) => Literal::Numeric(*val), // over the top optimization but interesting for learning
                 Literal::String(val) => Literal::String(val.clone()),
             };
-            return (Node::Literal(lit_val), 1);
+            (Node::Literal(lit_val), 1)
         }
         Token::Identifier(ident) => {
             match ident.as_str() {
@@ -65,10 +65,10 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
                 "let" => return (Node::Let, 1),
                 _ => (),
             }
-            return (Node::Ident(ident.clone()), 1);
+            (Node::Ident(ident.clone()), 1)
         }
         Token::Boolean(bool) => {
-            return (Node::Boolean(*bool), 1);
+            (Node::Boolean(*bool), 1)
         }
 
         // These should not happen because they are handled in parse_list
@@ -84,7 +84,7 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
 pub fn parse(tokens: Vec<Token>) -> AST {
     let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
     assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
-    return AST { root: s_expr };
+    AST { root: s_expr }
 }
 
 #[cfg(test)]

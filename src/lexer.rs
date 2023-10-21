@@ -36,12 +36,10 @@ pub enum Token {
 
 impl Token {
     fn from_string(s: &String) -> Token {
-        if s == "true" {
-            return Token::Boolean(true);
-        } else if s == "false" {
-            return Token::Boolean(false);
-        } else {
-            return Token::Identifier(s.to_string());
+        match s.as_str() {
+            "true" => Token::Boolean(true),
+            "false" => Token::Boolean(false),
+            _ => Token::Identifier(s.to_string()),
         }
     }
 
@@ -109,7 +107,7 @@ pub fn lex(s: &String) -> Vec<Token> {
                     if c != ' ' && c != '(' && c != ')' && c != ',' {
                         panic!("Unexpected character in number literal: `{}`", c);
                     }
-                    tokens.push(Token::from_numeric(&s));
+                    tokens.push(Token::from_numeric(s));
                     state = LexerState::None;
                 }
             }
@@ -124,17 +122,23 @@ pub fn lex(s: &String) -> Vec<Token> {
                 }
             }
             LexerState::None => {
-                if ['(', ')', ',', '+', '-', '*', '/'].contains(&c) {
-                    tokens.push(Token::from_char(c));
-                } else if c == '"' {
-                    state = LexerState::StringLiteral(String::new());
-                } else if c.is_numeric() {
-                    state = LexerState::NumberLiteral(c.to_string());
-                } else if c.is_alphanumeric() {
-                    state = LexerState::Identifier(c.to_string());
-                } else if c == ' ' {
-                } else {
-                    panic!("Unexpected character: `{}`", c);
+                match c {
+                    '(' | ')' | ',' | '+' | '-' | '*' | '/' => {
+                        tokens.push(Token::from_char(c));
+                    }
+                    '"' => {
+                        state = LexerState::StringLiteral(String::new());
+                    }
+                    c if c.is_numeric() => {
+                        state = LexerState::NumberLiteral(c.to_string());
+                    }
+                    c if c.is_alphanumeric() => {
+                        state = LexerState::Identifier(c.to_string());
+                    }
+                    ' ' => {}
+                    _ => {
+                        panic!("Unexpected character: `{}`", c);
+                    }
                 }
                 i += 1;
             }
@@ -148,7 +152,7 @@ pub fn lex(s: &String) -> Vec<Token> {
         LexerState::None => (),
     }
 
-    return tokens;
+    tokens
 }
 
 #[cfg(test)]

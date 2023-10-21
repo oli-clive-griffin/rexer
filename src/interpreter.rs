@@ -81,9 +81,9 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
 
     match first_node {
         // this is a smell - Fn isnt a real SExpr
-        Node::Fn => return eval_fun_dec(list, scope),
-        Node::If => return eval_if(list, scope),
-        Node::Let => return eval_let(list, scope),
+        Node::Fn => eval_fun_dec(list, scope),
+        Node::If => eval_if(list, scope),
+        Node::Let => eval_let(list, scope),
         Node::Ident(ident) => {
             let head_val = scope.bindings.get(ident).unwrap();
             let args_vals: &[RuntimeValue] = &list[1..]
@@ -93,7 +93,7 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
 
             match head_val {
                 RuntimeValue::Function(func) => {
-                    return eval_fun(func, &args_vals, scope);
+                    eval_fun(func, &args_vals, scope)
                 }
                 _ => panic!("Cannot call non-function value"),
             }
@@ -104,13 +104,12 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
                 .iter()
                 .map(|e| e.eval(scope))
                 .collect::<Vec<RuntimeValue>>();
-            return op.execute(rest_val);
+
+            op.execute(rest_val)
         }
         Node::Literal(_) | Node::Boolean(_) => panic!(),
-
-        Node::List(_) => todo!(), // Node::Indent(_) => {}
-                                  // Node::Op(_) => {}
-    };
+        Node::List(_) => todo!(),
+    }
 }
 
 fn eval_fun_dec(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
@@ -130,18 +129,18 @@ fn eval_let(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     let binding_exprs = &list[1..list.len() - 1];
     let expr = &list[list.len() - 1]; // ignore both the let and the expr
     let bindings = generate_let_bindings(binding_exprs, scope);
-    return expr.eval(&scope.with_bindings(bindings));
+    expr.eval(&scope.with_bindings(bindings))
 }
 
 fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     let condition = &list[1];
     let if_body = &list[2];
     let else_body = &list[3];
-    if condition.eval(scope).bool() {
-        return if_body.eval(scope);
+    (if condition.eval(scope).bool() {
+        if_body
     } else {
-        return else_body.eval(scope);
-    }
+        else_body
+    }).eval(scope)
 }
 
 fn eval_fun(func: &Function, args: &[RuntimeValue], scope: &Scope) -> RuntimeValue {
@@ -157,7 +156,7 @@ fn eval_fun(func: &Function, args: &[RuntimeValue], scope: &Scope) -> RuntimeVal
         .zip(args.iter().cloned())
         .collect::<Vec<(String, RuntimeValue)>>();
 
-    return func.body.eval(&scope.with_bindings(bindings));
+    func.body.eval(&scope.with_bindings(bindings))
 }
 
 fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
@@ -170,7 +169,7 @@ fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeVa
                 }
                 if let Node::Ident(ident) = &nodes[0] {
                     let val = &nodes[1].eval(scope);
-                    return (ident.clone(), val.clone());
+                    (ident.clone(), val.clone())
                 } else {
                     panic!("left side of let binding must be an identifier");
                 }
