@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{AST, SExpr, parse};
+use crate::parser::{AST, Node};
 use crate::lexer::{Literal, NumericLiteral, Operator};
 use crate::runtime_value::{RuntimeValue, Function};
 
@@ -47,68 +47,43 @@ impl Operator {
 
     fn binary(&self, a: RuntimeValue, b: RuntimeValue) -> RuntimeValue {
         match self {
-            Operator::Plus => a + b,
-            Operator::Divide => a / b,
-            Operator::Multiply => a * b,
-            Operator::Minus => a - b,
+            Operator::Add => a + b,
+            Operator::Div => a / b,
+            Operator::Mul => a * b,
+            Operator::Sub => a - b,
         }
     }
 }
 
-impl SExpr {
+impl Node {
     fn eval(&self, scope: &Scope) -> RuntimeValue {
         match self {
-            SExpr::List(list) => eval_list(list, scope),
-            SExpr::Literal(lit) => RuntimeValue::from_literal(lit),
-            SExpr::Boolean(bool) => RuntimeValue::Boolean(*bool),
-            SExpr::Op(op) => panic!("Cannot evaluate operator {:?}", op), // remove this eventually, this is simple to handle basic math
-            SExpr::Indent(ident) => {
+            Node::List(list) => eval_list(list, scope),
+            Node::Literal(lit) => RuntimeValue::from_literal(lit),
+            Node::Boolean(bool) => RuntimeValue::Boolean(*bool),
+            Node::Op(op) => RuntimeValue::Op(*op),
+            Node::Ident(ident) => {
                 match scope.bindings.get(ident) {
                     Some(val) => val.clone(), // inefficient, but for now just clone the value
                     None => panic!("Identifier {} not found in scope", ident),
                 }
             }
-            SExpr::Fn => panic!(),
-            SExpr::If => todo!(),
-            SExpr::Let => todo!(),
+            Node::Fn |
+            Node::If |
+            Node::Let => panic!("should not be parsed as a node"),
             
         }
     }
 }
 
-fn eval_list(list: &Vec<SExpr>, scope: &Scope) -> RuntimeValue {
-    let first_sexpr = &list[0];
+fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    let first_node = &list[0];
 
-    match first_sexpr {
-        SExpr::Fn => {
-            let args = parse_as_args(&list[1]);
-
-            let fn_body = &list[2];
-
-            return RuntimeValue::Function(Function {
-                params: args,
-                body: fn_body.clone(),
-            });
-        }
-        SExpr::If => {
-            let condition = &list[1];
-            let if_body = &list[2];
-            let else_body = &list[3];
-
-            if condition.eval(scope).bool() {
-                return if_body.eval(scope);
-            } else {
-                return else_body.eval(scope);
-            }
-        }
-        SExpr::Let => {
-            let binding_exprs = &list[1..list.len()-2]; // ignore both the let and the expr
-            let bindings = generate_bindings(binding_exprs, scope);
-            let expr = &list[list.len()-1];
-
-            return expr.eval(&scope.with_bindings(bindings));
-        }
-        SExpr::Indent(ident) => {
+    match first_node { // this is a smell - Fn isnt a real SExpr
+        Node::Fn => return eval_fun_dec(list, scope),
+        Node::If => return eval_if(list, scope),
+        Node::Let => return eval_let(list, scope),
+        Node::Ident(ident) => {
             let head_val = scope.bindings.get(ident).unwrap();
             match head_val {
                 RuntimeValue::Function(func) => {
@@ -117,32 +92,69 @@ fn eval_list(list: &Vec<SExpr>, scope: &Scope) -> RuntimeValue {
                 _ => panic!("Cannot call non-function value"),
             }
         }
-        SExpr::Op(op) => { // for now only handle operators
+        Node::Op(op) => { // for now only handle operators
             let rest_val = &list[1..].iter().map(|e| e.eval(scope)).collect::<Vec<RuntimeValue>>();
             return op.execute(rest_val);
         }
-        SExpr::List(_) => todo!(),
-        SExpr::Literal(_)
-        | SExpr::Boolean(_) => panic!(),
-    
+        Node::Literal(_)
+        | Node::Boolean(_) => panic!(),
+        
+        Node::List(_) => todo!()
+        // Node::Indent(_) => {}
+        // Node::Op(_) => {}
     };
 }
 
-fn evaluation_function(func: &Function, list: &[SExpr], scope: &Scope) -> RuntimeValue {
+fn eval_fun_dec(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    let args = parse_as_args(&list[1]);
+    let fn_body = &list[2];
+
+    // todo substitute scope into fn_body
+    let _ = scope;
+
+    return RuntimeValue::Function(Function {
+        params: args,
+        body: fn_body.clone(),
+    });
+}
+
+fn eval_let(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    let binding_exprs = &list[1..list.len()-1];
+    let expr = &list[list.len()-1]; // ignore both the let and the expr
+
+    let bindings = generate_bindings(binding_exprs, scope);
+    return expr.eval(&scope.with_bindings(bindings));
+}
+
+fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    let condition = &list[1];
+    let if_body = &list[2];
+    let else_body = &list[3];
+    if condition.eval(scope).bool() {
+        return if_body.eval(scope);
+    } else {
+        return else_body.eval(scope);
+    }
+}
+
+fn evaluation_function(func: &Function, list: &[Node], scope: &Scope) -> RuntimeValue {
+    let _ = func;
+    let _ = list;
+    let _ = scope;
     todo!()
 }
 
-fn generate_bindings(list: &[SExpr], scope: &Scope) -> Vec<(String, RuntimeValue)> {
+fn generate_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
     list
         .iter()
         .cloned()
         .map(|node| {
             match node {
-                SExpr::List(nodes) => {
+                Node::List(nodes) => {
                     if nodes.len() != 2 {
                         panic!("let binding must be a list of two elements");
                     }
-                    if let SExpr::Indent(ident) = &nodes[0] {
+                    if let Node::Ident(ident) = &nodes[0] {
                         let val = &nodes[1].eval(scope);
                         return (ident.clone(), val.clone());
                     } else {
@@ -155,10 +167,10 @@ fn generate_bindings(list: &[SExpr], scope: &Scope) -> Vec<(String, RuntimeValue
         .collect::<Vec<(String, RuntimeValue)>>()
 }
 
-fn parse_as_args(expr: &SExpr) -> Vec<String> {
-    if let SExpr::List(args) = expr {
+fn parse_as_args(expr: &Node) -> Vec<String> {
+    if let Node::List(args) = expr {
         args.iter().map(|e| {
-            if let SExpr::Indent(ident) = e {
+            if let Node::Ident(ident) = e {
                 ident.clone()
             } else {
                 panic!("Function arguments must be identifiers")
@@ -181,6 +193,8 @@ pub fn interpret(ast: &AST) {
         RuntimeValue::Float(f) => println!("Float: {}", f),
         RuntimeValue::Int(i) => println!("Int: {}", i),
         RuntimeValue::String(s) => println!("String: {}", s),
+        RuntimeValue::Function(func) => println!("Function: {:#?}", func),
+        RuntimeValue::Op(op) => println!("Op: {:#?}", op),
     };
 }
 
@@ -191,10 +205,10 @@ mod tests {
     #[test]
     fn test1() {
         let ast = AST {
-            root: SExpr::List(vec![
-                SExpr::Op(Operator::Plus),
-                SExpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                SExpr::Literal(Literal::Numeric(NumericLiteral::Int(2))),
+            root: Node::List(vec![
+                Node::Op(Operator::Add),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
             ])
         };
 
@@ -206,29 +220,46 @@ mod tests {
     #[test]
     fn test2() {
         let ast = AST {
-            root: SExpr::List(vec![
-                SExpr::Op(Operator::Plus),
-                SExpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                SExpr::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-                SExpr::List(vec![
-                    SExpr::Op(Operator::Minus),
-                    SExpr::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-                    SExpr::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+            root: Node::List(vec![
+                Node::Op(Operator::Add),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
+                Node::List(vec![
+                    Node::Op(Operator::Sub),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
                 ]),
-                SExpr::Literal(Literal::Numeric(NumericLiteral::Int(5))),
-                SExpr::List(vec![
-                    SExpr::Op(Operator::Multiply),
-                    SExpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                    SExpr::Literal(Literal::Numeric(NumericLiteral::Float(2.3))),
+                Node::Literal(Literal::Numeric(NumericLiteral::Int(5))),
+                Node::List(vec![
+                    Node::Op(Operator::Mul),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Float(2.3))),
                 ]),
             ])
         };
 
-        interpret(&ast);
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, RuntimeValue::Float(11.3))
+    }
 
-        assert_eq!(
-            ast.root.eval(&Scope::new()),
-            RuntimeValue::Float(11.3),
-        )
+    #[test]
+    fn test3() {
+        let ast = AST {
+            root: Node::List(vec![
+                Node::Let,
+                Node::List(vec![
+                    Node::Ident("x".to_owned()),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
+                ]),
+                Node::List(vec![
+                    Node::Op(Operator::Mul),
+                    Node::Ident("x".to_owned()),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+                ]),
+            ])
+        };
+
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, RuntimeValue::Int(6))
     }
 }

@@ -2,13 +2,13 @@ use crate::lexer::{Token, LR, Operator, Literal};
 
 #[derive(Debug, PartialEq)]
 pub struct AST {
-    pub root: SExpr,
+    pub root: Node,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SExpr {
-    List(Vec<SExpr>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
-    Indent(String),
+pub enum Node {
+    List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
+    Ident(String),
     Literal(Literal),
     Boolean(bool),
     Op(Operator),
@@ -20,7 +20,7 @@ pub enum SExpr {
     // Def,
 }
 
-fn parse_list(rest_tokens: &[Token]) -> (SExpr, usize) {
+fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
     let mut list = vec![];
 
     let mut i = 0;
@@ -38,10 +38,10 @@ fn parse_list(rest_tokens: &[Token]) -> (SExpr, usize) {
         i += i_diff;
     }
 
-    return (SExpr::List(list), i);
+    return (Node::List(list), i);
 }
 
-fn parse_sexpr(rest_tokens: &[Token]) -> (SExpr, usize) {
+fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
     let first = &rest_tokens[0];
 
     match first {
@@ -50,26 +50,26 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (SExpr, usize) {
                     return (s_expr, i_diff + 1);
         }
         Token::Operator(op) => {
-            return (SExpr::Op(*op), 1) // copied
+            return (Node::Op(*op), 1) // copied
         }
         Token::Literal(lit) => {
             let lit_val = match lit {
                 Literal::Numeric(val) => Literal::Numeric(*val), // over the top optimization but interesting for learning
                 Literal::String(val) => Literal::String(val.clone()),
             };
-            return (SExpr::Literal(lit_val), 1);
+            return (Node::Literal(lit_val), 1);
         }
         Token::Identifier(ident) => {
             match ident.as_str() {
-                "fn" => return (SExpr::Fn, 1),
-                "if" => return (SExpr::If, 1),
-                "let" => return (SExpr::Let, 1),
+                "fn" => return (Node::Fn, 1),
+                "if" => return (Node::If, 1),
+                "let" => return (Node::Let, 1),
                 _ => (),
             }
-            return (SExpr::Indent(ident.clone()), 1);
+            return (Node::Ident(ident.clone()), 1);
         }
         Token::Boolean(bool) => {
-            return (SExpr::Boolean(*bool), 1);
+            return (Node::Boolean(*bool), 1);
         }
 
         // These should not happen because they are handled in parse_list
@@ -103,7 +103,7 @@ mod tests {
 
         assert_eq!(
             parse(input).root,
-            SExpr::Literal(Literal::Numeric(NumericLiteral::Int(123)))
+            Node::Literal(Literal::Numeric(NumericLiteral::Int(123)))
         );
     }
 
@@ -115,15 +115,15 @@ mod tests {
 
         assert_eq!(
             root,
-            SExpr::List(
+            Node::List(
                 vec![
-                    SExpr::Op(Operator::Plus),
-                    SExpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                    SExpr::List(
+                    Node::Op(Operator::Add),
+                    Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
+                    Node::List(
                         vec![
-                            SExpr::Op(Operator::Minus),
-                            SExpr::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-                            SExpr::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+                            Node::Op(Operator::Sub),
+                            Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
+                            Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
                         ]
                     )
                 ]

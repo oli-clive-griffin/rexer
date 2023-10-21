@@ -6,10 +6,10 @@ pub enum LR {
 
 #[derive(Debug, PartialEq, Clone, Copy)] // todo revisit Clone, Copy
 pub enum Operator {
-    Plus,
-    Minus,
-    Multiply,
-    Divide,
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -60,10 +60,10 @@ impl Token {
             '(' => Token::Parenthesis(LR::Left),
             ')' => Token::Parenthesis(LR::Right),
             ',' => Token::Comma,
-            '+' => Token::Operator(Operator::Plus),
-            '-' => Token::Operator(Operator::Minus),
-            '*' => Token::Operator(Operator::Multiply),
-            '/' => Token::Operator(Operator::Divide),
+            '+' => Token::Operator(Operator::Add),
+            '-' => Token::Operator(Operator::Sub),
+            '*' => Token::Operator(Operator::Mul),
+            '/' => Token::Operator(Operator::Div),
             _ => panic!("Unexpected char: {}", c),
         }
     }
@@ -177,9 +177,9 @@ mod tests {
         let input = "(+ - *)".to_string();
         let expected = vec![
             Token::Parenthesis(LR::Left),
-            Token::Operator(Operator::Plus),
-            Token::Operator(Operator::Minus),
-            Token::Operator(Operator::Multiply),
+            Token::Operator(Operator::Add),
+            Token::Operator(Operator::Sub),
+            Token::Operator(Operator::Mul),
             Token::Parenthesis(LR::Right),
         ];
         assert_eq!(lex(&input), expected);
