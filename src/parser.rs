@@ -1,11 +1,12 @@
 use crate::lexer::{Token, LR, Operator, Literal};
 
-struct AST {
-    root: SExpr,
+#[derive(Debug, PartialEq)]
+pub struct AST {
+    pub root: SExpr,
 }
 
 #[derive(Debug, PartialEq)]
-enum SExpr {
+pub enum SExpr {
     List(Vec<SExpr>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
     Ident(String),
     Literal(Literal),
@@ -66,13 +67,15 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (SExpr, usize) {
 
         // These should not happen because they are handled in parse_list
         // could this be handled better by tightening up the types?
+        // basically it's the responsibility of parse_list to handle these
+        // by skipping them and returning the correct index skipper
         Token::Comma | Token::Parenthesis(LR::Right) => {
             panic!("Unexpected token: {:?}", first);
         }
     }
 }
 
-fn parse(tokens: Vec<Token>) -> AST {
+pub fn parse(tokens: Vec<Token>) -> AST {
     let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
     assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
     return AST { root: s_expr };
