@@ -103,7 +103,7 @@ pub fn lex(s: &String) -> Vec<Token> {
                     i += 1;
                 } else {
                     if c != ' ' && c != '(' && c != ')' && c != ',' {
-                        panic!("Unexpected character in number literal: {}", c);
+                        panic!("Unexpected character in number literal: `{}`", c);
                     }
                     tokens.push(Token::from_numeric(&s));
                     state = LexerState::None;
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unexpected character: #")]
+    #[should_panic(expected = "Unexpected character: `#`")]
     fn test_unexpected_character() {
         let input = "#".to_string();
         lex(&input);

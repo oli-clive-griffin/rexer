@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn test2() {
         let AST { root } = parse(lex(
-            "(+ 1 (- 4 3))".to_string()
+            &"(+ 1 (- 4 3))".to_string()
         ));
 
         assert_eq!(
