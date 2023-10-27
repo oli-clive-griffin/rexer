@@ -83,7 +83,11 @@ pub fn lex(s: &String) -> Vec<Token> {
 
     let mut tokens: Vec<Token> = vec![];
 
-    let chars = s.chars().collect::<Vec<_>>();
+    let chars = s
+        .trim()
+        .chars()
+        .filter(|c| { *c != '\n' && *c != '\r' })
+        .collect::<Vec<_>>();
 
     let mut i = 0;
     while i < chars.len() {

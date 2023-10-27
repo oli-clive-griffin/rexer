@@ -198,8 +198,7 @@ fn parse_as_args(expr: &Node) -> Vec<String> {
 /// for now, assume that the AST is a single SExpr
 /// and just evaluate it
 pub fn interpret(ast: &AST) {
-    println!("AST: {:#?}", &ast);
-
+    // println!("AST: {:#?}", &ast);
     return match ast.root.eval(&Scope::new()) {
         RuntimeValue::Boolean(b) => println!("Boolean: {}", b),
         RuntimeValue::Float(f) => println!("Float: {}", f),
