@@ -1,4 +1,5 @@
-use crate::lexer::{Literal, Operator, Token, LR};
+pub use crate::lexer::{Literal, NumericLiteral, Operator};
+use crate::lexer::{Token, LR};
 
 #[derive(Debug, PartialEq)]
 pub struct AST {
@@ -10,11 +11,11 @@ pub enum Node {
     List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
     Ident(String),
     Literal(Literal),
-    Boolean(bool),
     Op(Operator),
     Fn,
     If,
     Let,
+    Quote,
     // impl later:
     // Def,
 }
@@ -48,29 +49,15 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
             let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
             (s_expr, i_diff + 1)
         }
-        Token::Operator(op) => {
-            (Node::Op(*op), 1) // copied
-        }
-        Token::Literal(lit) => {
-            let lit_val = match lit {
-                Literal::Numeric(val) => Literal::Numeric(*val), // over the top optimization but interesting for learning
-                Literal::String(val) => Literal::String(val.clone()),
-            };
-            (Node::Literal(lit_val), 1)
-        }
-        Token::Identifier(ident) => {
-            match ident.as_str() {
-                "fn" => return (Node::Fn, 1),
-                "if" => return (Node::If, 1),
-                "let" => return (Node::Let, 1),
-                _ => (),
-            }
-            (Node::Ident(ident.clone()), 1)
-        }
-        Token::Boolean(bool) => {
-            (Node::Boolean(*bool), 1)
-        }
-
+        Token::Operator(op) => (Node::Op(*op), 1), // copied
+        Token::Literal(lit) => (Node::Literal(lit.clone()), 1),
+        Token::Identifier(ident) => match ident.as_str() {
+            "fn" => (Node::Fn, 1),
+            "if" => (Node::If, 1),
+            "let" => (Node::Let, 1),
+            "quote" => (Node::Quote, 1),
+            _ => (Node::Ident(ident.clone()), 1),
+        },
         // These should not happen because they are handled in parse_list
         // could this be handled better by tightening up the types?
         // basically it's the responsibility of parse_list to handle these

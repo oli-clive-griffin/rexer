@@ -16,6 +16,7 @@ pub enum RuntimeValue {
     String(String),
     Function(Function),
     Op(Operator),
+    List(Vec<RuntimeValue>),
 }
 
 impl RuntimeValue {
@@ -27,6 +28,7 @@ impl RuntimeValue {
             RuntimeValue::String(string) => *string != "",
             RuntimeValue::Function(Function { params: _, body: _ }) => true,
             RuntimeValue::Op(_) => true,
+            RuntimeValue::List(list) => !list.is_empty(),
         }
     }
 }

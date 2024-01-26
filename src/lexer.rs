@@ -22,6 +22,7 @@ pub enum NumericLiteral {
 pub enum Literal {
     Numeric(NumericLiteral),
     String(String),
+    Boolean(bool),
 }
 
 #[derive(Debug, PartialEq)]
@@ -30,15 +31,14 @@ pub enum Token {
     Operator(Operator),
     Literal(Literal),
     Identifier(String),
-    Boolean(bool),
     Comma,
 }
 
 impl Token {
     fn from_string(s: &String) -> Token {
         match s.as_str() {
-            "true" => Token::Boolean(true),
-            "false" => Token::Boolean(false),
+            "true" => Token::Literal(Literal::Boolean(true)),
+            "false" => Token::Literal(Literal::Boolean(false)),
             _ => Token::Identifier(s.to_string()),
         }
     }
@@ -86,7 +86,7 @@ pub fn lex(s: &String) -> Vec<Token> {
     let chars = s
         .trim()
         .chars()
-        .filter(|c| { *c != '\n' && *c != '\r' })
+        .filter(|c| *c != '\n' && *c != '\r')
         .collect::<Vec<_>>();
 
     let mut i = 0;
