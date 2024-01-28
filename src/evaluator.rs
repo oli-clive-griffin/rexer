@@ -26,7 +26,6 @@ impl Scope {
     fn with_bindings(&self, bindings: Vec<(String, RuntimeValue)>) -> Scope {
         let mut new_bindings = self.bindings.clone();
         new_bindings.extend(bindings);
-
         Scope {
             bindings: new_bindings,
         }
