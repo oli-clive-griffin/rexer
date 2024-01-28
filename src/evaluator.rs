@@ -1,8 +1,9 @@
 use core::panic;
 use std::collections::HashMap;
 
+use crate::builtins::BUILTINTS;
 use crate::parser::{Literal, Node, NumericLiteral, Operator, AST};
-use crate::runtime_value::{Function, RuntimeValue};
+use crate::runtime_value::RuntimeValue;
 
 struct Scope {
     // could make this a list of hashmaps that's search from the top down
@@ -13,7 +14,9 @@ struct Scope {
 impl Scope {
     fn new() -> Scope {
         Scope {
-            bindings: HashMap::new(),
+            bindings: HashMap::from_iter(
+                BUILTINTS.map(|builtin| (builtin.name.to_string(), RuntimeValue::BuiltIn(builtin))),
+            ),
         }
     }
 
@@ -24,6 +27,30 @@ impl Scope {
         Scope {
             bindings: new_bindings,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function {
+    pub params: Vec<String>,
+    pub body: Node,
+}
+
+impl Function {
+    fn eval(&self, args: &[RuntimeValue], scope: &Scope) -> RuntimeValue {
+        if self.params.len() != args.len() {
+            panic!("Function called with incorrect number of arguments");
+        }
+
+        // zip the args and params together
+        let bindings = self
+            .params
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .collect::<Vec<(String, RuntimeValue)>>();
+
+        self.body.eval(&scope.with_bindings(bindings))
     }
 }
 
@@ -41,7 +68,7 @@ impl RuntimeValue {
 }
 
 impl Operator {
-    fn execute(&self, args: &[RuntimeValue]) -> RuntimeValue {
+    fn eval(&self, args: &[RuntimeValue]) -> RuntimeValue {
         args.iter()
             .cloned()
             .reduce(|acc, val| self.binary(acc, val)) // cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
@@ -69,9 +96,44 @@ impl Node {
                 .get(ident)
                 .expect(format!("Identifier {ident} not found in scope").as_str())
                 .clone(),
-            thing => panic!("should not be parsed as a node: {:?}", thing),
+            Node::Fn => panic!("Node::Fn should not be evaluated"),
+            Node::If => panic!("Node::If should not be evaluated"),
+            Node::Let => panic!("Node::Let should not be evaluated"),
+            Node::Quote => panic!("Node::Quote should not be evaluated"),
         }
     }
+}
+
+enum Form {
+    Special(SpecialForm),
+    Regular(Vec<Node>),
+}
+
+struct FnForm {
+    args: Vec<Node>,
+    body: Vec<Node>,
+}
+
+struct IfForm {
+    condition: Node,
+    if_body: Node,
+    else_body: Node,
+}
+
+struct LetForm {
+    bindings: Vec<(String, Node)>,
+    expr: Node,
+}
+
+struct QuoteForm {
+    expr: Node,
+}
+
+enum SpecialForm {
+    Fn(FnForm),
+    If(IfForm),
+    Let(LetForm),
+    Quote(QuoteForm),
 }
 
 fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
@@ -83,6 +145,10 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
         Node::If => return eval_if(list, scope),
         Node::Let => return eval_let(list, scope),
         Node::Quote => return eval_quote(list, scope),
+        // Node::List(_) => todo!(),
+        // Node::Ident(_) => todo!(),
+        // Node::Literal(_) => todo!(),
+        // Node::Op(_) => todo!(),
         _ => (),
     }
 
@@ -95,18 +161,16 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     let head_val = &vals[0];
 
     match head_val {
-        RuntimeValue::Function(func) => eval_fun(func, args_vals, scope),
-        RuntimeValue::Op(op) => op.execute(args_vals),
-        RuntimeValue::Int(_) => panic!("Cannot call int value"),
+        RuntimeValue::Op(op) => op.eval(args_vals),
+        RuntimeValue::BuiltIn(builtin) => builtin.eval(args_vals),
+        RuntimeValue::Function(func) => func.eval(args_vals, scope),
+        RuntimeValue::Int(_) => panic!("Cannot call int value. list: {:?}", list),
         RuntimeValue::List(_) => panic!("Cannot call list value"),
         RuntimeValue::Float(_) => panic!("Cannot call float value"),
         RuntimeValue::String(_) => panic!("Cannot call string value"),
         RuntimeValue::Boolean(_) => panic!("Cannot call boolean value"),
+        RuntimeValue::Symbol(_) => panic!("Cannot call symbol value"),
     }
-}
-
-fn eval_quote(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    RuntimeValue::List(list[1..].iter().map(|arg| arg.eval(scope)).collect())
 }
 
 fn eval_list_as_function_declaration(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
@@ -130,6 +194,9 @@ fn eval_let(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
 }
 
 fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    if list.len() != 4 {
+        panic!("malformed if statement: Must have 3 arguments");
+    }
     let condition = &list[1];
     let if_body = &list[2];
     let else_body = &list[3];
@@ -140,20 +207,27 @@ fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     }
 }
 
-fn eval_fun(func: &Function, args: &[RuntimeValue], scope: &Scope) -> RuntimeValue {
-    if func.params.len() != args.len() {
-        panic!("Function called with incorrect number of arguments");
+/// takes a list of nodes of the form (Node::Quote, Node::List(..))
+/// returns a list of the evaulat
+fn eval_quote(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    if list.len() != 2 {
+        panic!("quote must be called with one argument");
+    }
+    quote(&list[1], scope)
+}
+
+fn quote(node: &Node, scope: &Scope) -> RuntimeValue {
+    match node {
+        Node::List(list) => RuntimeValue::List(list.iter().map(|node| quote(node, scope)).collect()),
+        Node::Ident(ident) => RuntimeValue::Symbol(ident.clone()),
+        Node::Literal(_) => node.eval(scope),
+        Node::Op(_) => todo!(),
+        Node::Fn => todo!(),
+        Node::If => todo!(),
+        Node::Let => todo!(),
+        Node::Quote => panic!("Cannot quote the quote special form"),
     }
 
-    // zip the args and params together
-    let bindings = func
-        .params
-        .iter()
-        .cloned()
-        .zip(args.iter().cloned())
-        .collect::<Vec<(String, RuntimeValue)>>();
-
-    func.body.eval(&scope.with_bindings(bindings))
 }
 
 fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
@@ -165,6 +239,7 @@ fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeVa
                     panic!("let binding must be a list of two elements");
                 }
                 if let Node::Ident(ident) = &nodes[0] {
+                    println!("ident: {:?}, body: {:?}", ident, nodes[1]);
                     let val = &nodes[1].eval(scope);
                     (ident.clone(), val.clone())
                 } else {
@@ -193,9 +268,10 @@ fn parse_as_args(expr: &Node) -> Vec<String> {
 }
 
 /// for now, assume that the AST is a single SExpr
-/// and just evaluate it
-pub fn interpret(ast: &AST) {
-    println!("{:#?}", ast);
+/// and just evaluate it.
+/// Obvious next steps are to allow for multiple SExprs (lines)
+/// and to manage a global scope being passed between them.
+pub fn evaluate(ast: &AST) {
     println!("{:#?}", ast.root.eval(&Scope::new()));
 }
 
@@ -212,9 +288,7 @@ mod tests {
                 Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
             ]),
         };
-
         let output = ast.root.eval(&Scope::new());
-
         assert_eq!(output, RuntimeValue::Int(3));
     }
 
@@ -238,7 +312,6 @@ mod tests {
                 ]),
             ]),
         };
-
         let res = ast.root.eval(&Scope::new());
         assert_eq!(res, RuntimeValue::Float(11.3))
     }
@@ -259,29 +332,7 @@ mod tests {
                 ]),
             ]),
         };
-
         let res = ast.root.eval(&Scope::new());
         assert_eq!(res, RuntimeValue::Int(6))
-    }
-
-    #[test]
-    fn test_quote() {
-        let ast = AST {
-            root: Node::List(vec![
-                Node::Quote,
-                Node::List(vec![
-                    Node::Op(Operator::Add),
-                    Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                    Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-                ]),
-                Node::Literal(Literal::String("second".to_string()))
-            ])
-        };
-
-        let res = ast.root.eval(&Scope::new());
-        assert_eq!(res, RuntimeValue::List(vec![
-            RuntimeValue::Int(3),
-            RuntimeValue::String("second".to_string())
-        ]));
     }
 }

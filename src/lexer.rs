@@ -78,17 +78,24 @@ enum LexerState {
     Identifier(String),    // could resolve to a keyword, identifier, or boolean
 }
 
+fn remove_comments(s: String) -> String {
+    s 
+        .trim()
+        .split('\n')
+        .filter(|line| !line.trim().starts_with(';'))
+        .collect::<Vec<&str>>()
+        .concat()
+}
+
 pub fn lex(s: &String) -> Vec<Token> {
-    let mut state: LexerState = LexerState::None;
-
-    let mut tokens: Vec<Token> = vec![];
-
-    let chars = s
+    let chars = remove_comments(s.to_string())
         .trim()
         .chars()
         .filter(|c| *c != '\n' && *c != '\r')
         .collect::<Vec<_>>();
 
+    let mut state: LexerState = LexerState::None;
+    let mut tokens: Vec<Token> = vec![];
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];

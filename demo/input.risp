@@ -1,5 +1,8 @@
 (let
     (x (fn (a) (* a 2)))
     (b 10)
-    (x b))
-    
+    (c (cons 1 (list 2 3)))
+    (d (car (list (list 1 2 3) 2 3)))
+    (e (cdr (list 0 1 2 3)))
+    (f (quote (1 2 3)))
+    (list x b c d e f))

@@ -1,12 +1,8 @@
+use crate::{builtins::BuiltIn, evaluator::Function};
+use core::panic;
 use std::ops;
 
-use crate::{lexer::Operator, parser::Node};
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Function {
-    pub params: Vec<String>,
-    pub body: Node,
-}
+use crate::lexer::Operator;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeValue {
@@ -14,9 +10,11 @@ pub enum RuntimeValue {
     Float(f64),
     Boolean(bool),
     String(String),
+    Symbol(String),
     Function(Function),
     Op(Operator),
     List(Vec<RuntimeValue>),
+    BuiltIn(BuiltIn),
 }
 
 impl RuntimeValue {
@@ -29,6 +27,8 @@ impl RuntimeValue {
             RuntimeValue::Function(Function { params: _, body: _ }) => true,
             RuntimeValue::Op(_) => true,
             RuntimeValue::List(list) => !list.is_empty(),
+            RuntimeValue::BuiltIn(_) => true,
+            RuntimeValue::Symbol(_) => true,
         }
     }
 }

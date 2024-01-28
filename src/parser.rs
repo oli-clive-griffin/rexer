@@ -13,11 +13,11 @@ pub enum Node {
     Literal(Literal),
     Op(Operator),
     Fn,
-    If,
+    If, // todo change to cond as superset of functionality
     Let,
     Quote,
     // impl later:
-    // Def,
+    // Defun
 }
 
 fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
