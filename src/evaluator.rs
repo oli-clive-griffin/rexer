@@ -62,7 +62,7 @@ impl RuntimeValue {
                 NumericLiteral::Float(f) => RuntimeValue::Float(*f),
             },
             Literal::String(s) => RuntimeValue::String(s.clone()),
-            Literal::Boolean(b) => RuntimeValue::Boolean(*b), // cloned
+            Literal::Boolean(b) => RuntimeValue::Boolean(*b),
         }
     }
 }
@@ -137,7 +137,7 @@ enum SpecialForm {
 }
 
 impl SpecialForm {
-    fn eval(&self, scope: &Scope) -> RuntimeValue {
+    fn eval(self, scope: &Scope) -> RuntimeValue {
         match self {
             SpecialForm::Fn(form) => {
                 // form.args
@@ -148,8 +148,8 @@ impl SpecialForm {
                 // let _ = scope;
 
                 RuntimeValue::Function(Function {
-                    params: form.args.clone(),
-                    body: form.body.clone(),
+                    params: form.args,
+                    body: form.body,
                 })
             }
             SpecialForm::If(form) => {
