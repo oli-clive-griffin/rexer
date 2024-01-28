@@ -1,6 +1,5 @@
 mod builtins;
 mod evaluator;
-mod function;
 mod lexer;
 mod parser;
 mod runtime_value;

@@ -2,9 +2,9 @@ use core::panic;
 use std::collections::HashMap;
 
 use crate::builtins::BUILTINTS;
-use crate::function::Function;
 use crate::lexer::{Literal, NumericLiteral, Operator};
 use crate::parser::Node;
+use crate::runtime_value::Function;
 use crate::runtime_value::RuntimeValue;
 use crate::sturctural_parser::{Form, SpecialForm, StructuredNode};
 
@@ -89,7 +89,7 @@ impl StructuredNode {
             StructuredNode::Ident(ident) => scope
                 .bindings
                 .get(&ident)
-                .expect(format!("Identifier {ident} not found in scope").as_str())
+                .unwrap_or_else(|| panic!("Identifier {ident} not found in scope"))
                 .clone(),
             StructuredNode::Literal(lit) => RuntimeValue::from_literal(lit),
             StructuredNode::Op(op) => RuntimeValue::Op(op),
@@ -166,7 +166,7 @@ fn quote(node: Node) -> RuntimeValue {
         Node::Literal(lit) => RuntimeValue::from_literal(lit),
         Node::Op(op) => RuntimeValue::Op(op),
         Node::List(node_list) => {
-            RuntimeValue::List(node_list.iter().cloned().map(|node| quote(node)).collect())
+            RuntimeValue::List(node_list.iter().cloned().map(quote).collect())
         }
         Node::Fn => todo!("not sure how we should handle quoting `Node::Fn`"),
         Node::If => todo!("not sure how we should handle quoting `Node::If`"),

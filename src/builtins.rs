@@ -81,7 +81,7 @@ const EMPTYP: RustFunc = RustFunc(|args| {
     }
 });
 
-pub const BUILTINTS: [(&'static str, RustFunc); 7] = [
+pub const BUILTINTS: [(&str, RustFunc); 7] = [
     ("cons", CONS),
     ("car", CAR),
     ("cdr", CDR),

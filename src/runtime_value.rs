@@ -1,6 +1,12 @@
-use crate::{builtins::RustFunc, function::Function, lexer::Operator};
+use crate::{builtins::RustFunc, lexer::Operator, sturctural_parser::StructuredNode};
 use core::panic;
 use std::ops;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function {
+    pub params: Vec<String>,
+    pub body: StructuredNode,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeValue {
@@ -21,7 +27,7 @@ impl RuntimeValue {
             RuntimeValue::Boolean(b) => *b,
             RuntimeValue::Int(int) => *int != 0,
             RuntimeValue::Float(float) => *float != 0.0,
-            RuntimeValue::String(string) => *string != "",
+            RuntimeValue::String(string) => string.is_empty(),
             RuntimeValue::Function(Function { params: _, body: _ }) => true,
             RuntimeValue::Op(_) => true,
             RuntimeValue::List(list) => !list.is_empty(),

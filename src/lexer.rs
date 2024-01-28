@@ -43,7 +43,7 @@ impl Token {
         }
     }
 
-    fn from_numeric(s: &String) -> Token {
+    fn from_numeric(s: &str) -> Token {
         Token::Literal(Literal::Numeric(if s.contains('.') {
             NumericLiteral::Float(
                 s.parse::<f64>()

@@ -54,7 +54,7 @@ pub fn structure_ast(root: Node) -> StructuredNode {
         Node::List(nodes) => StructuredNode::Form(parse_form(nodes)), // .iter().map(|node| structure_ast(node)).flatten().collect(),
         Node::Ident(ident) => StructuredNode::Ident(ident.clone()),
         Node::Literal(lit) => StructuredNode::Literal(lit.clone()),
-        Node::Op(op) => StructuredNode::Op(op.clone()),
+        Node::Op(op) => StructuredNode::Op(op),
         Node::Fn => panic!("Node::Fn should not be evaluated"),
         Node::If => panic!("Node::If should not be evaluated"),
         Node::Let => panic!("Node::Let should not be evaluated"),
