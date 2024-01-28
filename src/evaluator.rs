@@ -246,7 +246,7 @@ fn parse_form(list: &[Node]) -> Form {
 }
 
 impl Form {
-    fn eval(&self, scope: &Scope) -> RuntimeValue {
+    fn eval(self, scope: &Scope) -> RuntimeValue {
         match self {
             Form::Special(form) => form.eval(scope),
             Form::Regular(node) => eval_normal_form(node, scope)
@@ -258,7 +258,7 @@ fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
     parse_form(list).eval(scope)
 }
 
-fn eval_normal_form(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+fn eval_normal_form(list: Vec<Node>, scope: &Scope) -> RuntimeValue {
     // let form = parse_form(list);
 
     let vals = list
@@ -280,19 +280,6 @@ fn eval_normal_form(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
         RuntimeValue::Boolean(_) => panic!("Cannot call boolean value"),
         RuntimeValue::Symbol(_) => panic!("Cannot call symbol value"),
     }
-}
-
-fn eval_list_as_function_declaration(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    let args = parse_as_args(&list[1]);
-    let fn_body = &list[2];
-
-    // todo substitute scope into fn_body
-    let _ = scope;
-
-    return RuntimeValue::Function(Function {
-        params: args,
-        body: fn_body.clone(),
-    });
 }
 
 fn quote(node: &Node, scope: &Scope) -> RuntimeValue {
