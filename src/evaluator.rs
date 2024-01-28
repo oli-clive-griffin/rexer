@@ -110,8 +110,8 @@ enum Form {
 }
 
 struct FnForm {
-    args: Vec<Node>,
-    body: Vec<Node>,
+    args: Vec<String>,
+    body: Node, // for example, we might want: (let (get-size (fn () 1)) (get-size))
 }
 
 struct IfForm {
@@ -136,29 +136,138 @@ enum SpecialForm {
     Quote(QuoteForm),
 }
 
-fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    // I think this kind of pattern matching is a code smell,
-    // there should be a "special form" type that evaluates itself
-    match list[0] {
-        // handle special forms:
-        Node::Fn => return eval_list_as_function_declaration(list, scope),
-        Node::If => return eval_if(list, scope),
-        Node::Let => return eval_let(list, scope),
-        Node::Quote => return eval_quote(list, scope),
-        // Node::List(_) => todo!(),
-        // Node::Ident(_) => todo!(),
-        // Node::Literal(_) => todo!(),
-        // Node::Op(_) => todo!(),
-        _ => (),
+impl SpecialForm {
+    fn eval(&self, scope: &Scope) -> RuntimeValue {
+        match self {
+            SpecialForm::Fn(form) => {
+                // form.args
+                // let args = parse_as_args(&form.args);
+                // let fn_body = &form.body;
+
+                // todo substitute scope into fn_body
+                // let _ = scope;
+
+                RuntimeValue::Function(Function {
+                    params: form.args.clone(),
+                    body: form.body.clone(),
+                })
+            }
+            SpecialForm::If(form) => {
+                if form.condition.eval(scope).bool() {
+                    form.if_body.eval(scope)
+                } else {
+                    form.else_body.eval(scope)
+                }
+            }
+            SpecialForm::Let(form) => {
+                let bindings = form_let_bindings(&form.bindings, scope);
+                form.expr.eval(&scope.with_bindings(bindings))
+            }
+            SpecialForm::Quote(form) => quote(&form.expr, scope),
+        }
     }
+}
+
+/// structurally parses a list into a form so that structural checking can
+/// be decoupled from evaluation
+fn parse_form(list: &[Node]) -> Form {
+    match list[0] {
+        Node::Fn => {
+            match &list[1..] {
+                [Node::List(args), bodyexpr] => {
+                    let args = args
+                        .iter()
+                        .map(|arg_node| match arg_node {
+                            Node::Ident(ident) => ident.clone(),
+                            _ => panic!("Function arguments must be identifiers"),
+                        })
+                        .collect();
+                    Form::Special(SpecialForm::Fn(FnForm {
+                        args,
+                        body: bodyexpr.clone(),
+                    }))
+                }
+                _ => panic!("Fn form must be called with a list of arguments and a body"),
+            }
+        }
+        Node::If => {
+            match &list[1..] {
+                [condition, if_body, else_body] => {
+                    Form::Special(SpecialForm::If(IfForm {
+                        condition: condition.clone(),
+                        if_body: if_body.clone(),
+                        else_body: else_body.clone(),
+                    }))
+                }
+                _ => panic!("If form must be called with a condition, if body, and else body"),
+            }
+        }
+        Node::Let => {
+            if list.len() < 3 {
+                panic!("Let form must be called with a list of bindings and an expr");
+            }
+            let bindings = &list[1..list.len() - 1];
+            let expr = list.last().unwrap();
+            return Form::Special(SpecialForm::Let(LetForm {
+                bindings: bindings
+                    .iter()
+                    .map(|node| {
+                        match node {
+                            Node::List(nodes) => {
+                                if nodes.len() != 2 {
+                                    panic!("let binding must be a list of two elements");
+                                }
+                                if let Node::Ident(ident) = &nodes[0] {
+                                    (ident.clone(), nodes[1].clone())
+                                } else {
+                                    panic!("left side of let binding must be an identifier");
+                                }
+                            }
+                            _ => panic!("All bindings must be lists"),
+                        }
+                    }).collect(),
+                expr: expr.clone(),
+            }));
+        }
+        Node::Quote => {
+            match &list[1..] {
+                [expr] => {
+                    Form::Special(SpecialForm::Quote(QuoteForm {
+                        expr: expr.clone(),
+                    }))
+                }
+                _ => panic!("Quote form must be called with an expr"),
+            }
+        }
+        _ => {
+            Form::Regular(list.to_vec())
+        }
+    }
+}
+
+impl Form {
+    fn eval(&self, scope: &Scope) -> RuntimeValue {
+        match self {
+            Form::Special(form) => form.eval(scope),
+            Form::Regular(node) => eval_normal_form(node, scope)
+        }
+    }
+}
+
+fn eval_list(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    parse_form(list).eval(scope)
+}
+
+fn eval_normal_form(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
+    // let form = parse_form(list);
 
     let vals = list
         .iter()
         .map(|arg| arg.eval(scope))
         .collect::<Vec<RuntimeValue>>();
 
-    let args_vals = &vals[1..];
     let head_val = &vals[0];
+    let args_vals = &vals[1..];
 
     match head_val {
         RuntimeValue::Op(op) => op.eval(args_vals),
@@ -186,36 +295,6 @@ fn eval_list_as_function_declaration(list: &Vec<Node>, scope: &Scope) -> Runtime
     });
 }
 
-fn eval_let(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    let binding_exprs = &list[1..list.len() - 1];
-    let expr = &list[list.len() - 1]; // ignore both the let and the expr
-    let bindings = generate_let_bindings(binding_exprs, scope);
-    expr.eval(&scope.with_bindings(bindings))
-}
-
-fn eval_if(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    if list.len() != 4 {
-        panic!("malformed if statement: Must have 3 arguments");
-    }
-    let condition = &list[1];
-    let if_body = &list[2];
-    let else_body = &list[3];
-    if condition.eval(scope).bool() {
-        if_body.eval(scope)
-    } else {
-        else_body.eval(scope)
-    }
-}
-
-/// takes a list of nodes of the form (Node::Quote, Node::List(..))
-/// returns a list of the evaulat
-fn eval_quote(list: &Vec<Node>, scope: &Scope) -> RuntimeValue {
-    if list.len() != 2 {
-        panic!("quote must be called with one argument");
-    }
-    quote(&list[1], scope)
-}
-
 fn quote(node: &Node, scope: &Scope) -> RuntimeValue {
     match node {
         Node::List(list) => RuntimeValue::List(list.iter().map(|node| quote(node, scope)).collect()),
@@ -230,41 +309,11 @@ fn quote(node: &Node, scope: &Scope) -> RuntimeValue {
 
 }
 
-fn generate_let_bindings(list: &[Node], scope: &Scope) -> Vec<(String, RuntimeValue)> {
+fn form_let_bindings(list: &[(String, Node)], scope: &Scope) -> Vec<(String, RuntimeValue)> {
     list.iter()
         .cloned()
-        .map(|node| match node {
-            Node::List(nodes) => {
-                if nodes.len() != 2 {
-                    panic!("let binding must be a list of two elements");
-                }
-                if let Node::Ident(ident) = &nodes[0] {
-                    println!("ident: {:?}, body: {:?}", ident, nodes[1]);
-                    let val = &nodes[1].eval(scope);
-                    (ident.clone(), val.clone())
-                } else {
-                    panic!("left side of let binding must be an identifier");
-                }
-            }
-            _ => panic!("All bindings must be lists"),
-        })
+        .map(|(name, expr)| (name, expr.eval(scope)))
         .collect::<Vec<(String, RuntimeValue)>>()
-}
-
-fn parse_as_args(expr: &Node) -> Vec<String> {
-    if let Node::List(args) = expr {
-        args.iter()
-            .map(|e| {
-                if let Node::Ident(ident) = e {
-                    ident.clone()
-                } else {
-                    panic!("Function arguments must be identifiers")
-                }
-            })
-            .collect::<Vec<String>>()
-    } else {
-        panic!("Function arguments must be a list")
-    }
 }
 
 /// for now, assume that the AST is a single SExpr

@@ -11,7 +11,7 @@ pub enum Node {
     List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
     Ident(String),
     Literal(Literal),
-    Op(Operator),
+    Op(Operator), // TODO just use builtin
     Fn,
     If, // todo change to cond as superset of functionality
     Let,
