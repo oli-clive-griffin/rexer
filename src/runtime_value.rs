@@ -1,8 +1,6 @@
-use crate::{builtins::BuiltIn, evaluator::Function};
+use crate::{builtins::RustFunc, function::Function, lexer::Operator};
 use core::panic;
 use std::ops;
-
-use crate::lexer::Operator;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeValue {
@@ -14,7 +12,7 @@ pub enum RuntimeValue {
     Function(Function),
     Op(Operator),
     List(Vec<RuntimeValue>),
-    BuiltIn(BuiltIn),
+    BuiltIn(RustFunc),
 }
 
 impl RuntimeValue {

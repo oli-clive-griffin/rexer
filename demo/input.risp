@@ -1,8 +1,16 @@
 (let
-    (x (fn (a) (* a 2)))
-    (b 10)
-    (c (cons 1 (list 2 3)))
-    (d (car (list (list 1 2 3) 2 3)))
-    (e (cdr (list 0 1 2 3)))
-    (f (quote (1 2 3)))
-    (list x b c d e f))
+    ; (x (fn (a) (* a 2)))
+    ; (b 10)
+    ; (c (cons 1 (list 2 3)))
+    ; (d (car (list (list 1 2 3) 2 3)))
+    ; (e (cdr (list 0 1 2 3)))
+    ; (f (quote (1 2 3)))
+    (plus1 (fn (a) (+ a 1)))
+    (map (fn (f list)
+        (if (emptyp list)
+            list
+            (cons (f (car list)) (map f (cdr list))))))
+    (list
+        (map plus1 (list 1 2 3))
+    )
+)

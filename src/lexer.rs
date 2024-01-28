@@ -79,8 +79,7 @@ enum LexerState {
 }
 
 fn remove_comments(s: String) -> String {
-    s 
-        .trim()
+    s.trim()
         .split('\n')
         .filter(|line| !line.trim().starts_with(';'))
         .collect::<Vec<&str>>()

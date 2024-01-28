@@ -1,11 +1,6 @@
 pub use crate::lexer::{Literal, NumericLiteral, Operator};
 use crate::lexer::{Token, LR};
 
-#[derive(Debug, PartialEq)]
-pub struct AST {
-    pub root: Node,
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum Node {
     List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
@@ -16,8 +11,6 @@ pub enum Node {
     If, // todo change to cond as superset of functionality
     Let,
     Quote,
-    // impl later:
-    // Defun
 }
 
 fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
@@ -68,10 +61,10 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
     }
 }
 
-pub fn parse(tokens: Vec<Token>) -> AST {
+pub fn parse(tokens: Vec<Token>) -> Node {
     let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
     assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
-    AST { root: s_expr }
+    s_expr
 }
 
 #[cfg(test)]
@@ -85,14 +78,14 @@ mod tests {
         let input = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
 
         assert_eq!(
-            parse(input).root,
+            parse(input),
             Node::Literal(Literal::Numeric(NumericLiteral::Int(123)))
         );
     }
 
     #[test]
     fn test2() {
-        let AST { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
+        let root = parse(lex(&"(+ 1 (- 4 3))".to_string()));
 
         assert_eq!(
             root,
