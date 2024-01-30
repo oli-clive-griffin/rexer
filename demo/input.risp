@@ -1,13 +1,13 @@
 (let
     (l (list 1 2 3))
-    (reduce
+    (fold
         (fn (f list)
             (let
-                (innerf (fn (ilist acc)
-                            (if (emptyp ilist)
+                (inner (fn (ilist acc)
+                            (if (empty? ilist)
                                 acc
-                                (innerf
+                                (inner
                                     (cdr ilist)
                                     (f acc (first ilist))))))
-                (innerf list 0))))
-    (reduce + l))
+                (inner (cdr list) (first list)))))
+    (fold + l))

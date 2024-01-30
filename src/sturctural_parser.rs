@@ -1,3 +1,9 @@
+/// Parses an AST into a more structurally valid AST, so that structural checking
+/// can be front-loaded and decoupled from evaluation.
+/// for example, when later evaluating (fn (x) (+ x 1)), it'd be great if we could
+/// be sure that the structure of the `fn` form is valid, so that we don't have to
+/// check that while evaluating the function statement.
+
 use crate::{
     lexer::{Literal, Operator},
     parser::Node,

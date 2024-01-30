@@ -88,7 +88,7 @@ pub const BUILTINTS: [(&str, RustFunc); 7] = [
     ("list", LIST),
     ("first", FIRST),
     ("last", LAST),
-    ("emptyp", EMPTYP),
+    ("empty?", EMPTYP),
 ];
 
 #[cfg(test)]

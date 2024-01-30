@@ -4,7 +4,7 @@ pub enum LR {
     Right,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)] // todo revisit Clone, Copy
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Operator {
     Add,
     Sub,
@@ -101,7 +101,11 @@ pub fn lex(s: &String) -> Vec<Token> {
 
         match state {
             LexerState::Identifier(ref mut s) => {
-                if c.is_alphanumeric() {
+                // allow anything apart from whitespace, parens, and commas
+                // in identifiers.
+                // NOTE: this doesn't mean identifiers can start with anything,
+                // they must start with a letter
+                if c != '(' && c != ')' && c != ' ' && c != ',' {
                     s.push(c);
                     i += 1;
                 } else {
@@ -170,9 +174,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_number_literal() {
+    fn test_int_literal() {
         let input = "123".to_string();
         let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
+        assert_eq!(lex(&input), expected);
+    }
+
+    #[test]
+    fn test_float_literal() {
+        let input = "1.23".to_string();
+        let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Float(1.23)))];
         assert_eq!(lex(&input), expected);
     }
 
@@ -185,8 +196,8 @@ mod tests {
 
     #[test]
     fn test_identifier() {
-        let input = "variableName".to_string();
-        let expected = vec![Token::Identifier("variableName".to_string())];
+        let input = "variable_name".to_string();
+        let expected = vec![Token::Identifier("variable_name".to_string())];
         assert_eq!(lex(&input), expected);
     }
 
