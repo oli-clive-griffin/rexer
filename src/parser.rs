@@ -6,11 +6,13 @@ pub enum Node {
     List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
     Ident(String),
     Literal(Literal),
-    Op(Operator), // TODO just use builtin
+    Op(Operator),
     Fn,
-    If, // todo change to cond as superset of functionality
+    If,
     Let,
     Quote,
+    // impl later:
+    // Def,
 }
 
 fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {

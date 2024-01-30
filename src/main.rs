@@ -3,7 +3,7 @@ mod evaluator;
 mod lexer;
 mod parser;
 mod runtime_value;
-mod sturctural_parser;
+mod structural_parser;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -18,14 +18,6 @@ fn main() {
 
     let tokens = lexer::lex(&contents);
     let ast_root = parser::parse(tokens);
-    let structured_ast = sturctural_parser::structure_ast(ast_root);
+    let structured_ast = structural_parser::structure_ast(ast_root);
     evaluator::evaluate(structured_ast);
 }
-
-// fn run(input: String) -> String {
-//     let tokens = lexer::lex(&input);
-//     let ast = parser::parse(tokens);
-//     let ast = sturctural_parser::structure_ast(ast);
-//     let result = evaluator::evaluate(ast);
-//     format!("{:?}", result)
-// }

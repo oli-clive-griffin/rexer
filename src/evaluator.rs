@@ -6,7 +6,7 @@ use crate::lexer::{Literal, NumericLiteral, Operator};
 use crate::parser::Node;
 use crate::runtime_value::Function;
 use crate::runtime_value::RuntimeValue;
-use crate::sturctural_parser::{Form, SpecialForm, StructuredNode};
+use crate::structural_parser::{Form, SpecialForm, StructuredNode};
 
 struct Scope {
     // could make this a list of hashmaps that's search from the top down
@@ -164,9 +164,7 @@ fn quote(node: Node) -> RuntimeValue {
         Node::Ident(ident) => RuntimeValue::Symbol(ident.clone()),
         Node::Literal(lit) => RuntimeValue::from_literal(lit),
         Node::Op(op) => RuntimeValue::Op(op),
-        Node::List(node_list) => {
-            RuntimeValue::List(node_list.iter().cloned().map(quote).collect())
-        }
+        Node::List(node_list) => RuntimeValue::List(node_list.iter().cloned().map(quote).collect()),
         Node::Fn => todo!("not sure how we should handle quoting `Node::Fn`"),
         Node::If => todo!("not sure how we should handle quoting `Node::If`"),
         Node::Let => todo!("not sure how we should handle quoting `Node::Let`"),
@@ -194,7 +192,7 @@ pub fn evaluate(ast: StructuredNode) {
 
 #[cfg(test)]
 mod tests {
-    use crate::sturctural_parser::structure_ast;
+    use crate::structural_parser::structure_ast;
 
     use super::*;
 

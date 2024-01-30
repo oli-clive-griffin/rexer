@@ -1,4 +1,4 @@
-use crate::{builtins::RustFunc, lexer::Operator, sturctural_parser::StructuredNode};
+use crate::{builtins::RustFunc, lexer::Operator, structural_parser::StructuredNode};
 use core::panic;
 use std::ops;
 

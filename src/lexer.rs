@@ -183,7 +183,9 @@ mod tests {
     #[test]
     fn test_float_literal() {
         let input = "1.23".to_string();
-        let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Float(1.23)))];
+        let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Float(
+            1.23,
+        )))];
         assert_eq!(lex(&input), expected);
     }
 
