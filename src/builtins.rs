@@ -54,7 +54,7 @@ const CDR: BuiltIn = BuiltIn {
     symbol: "cdr",
     eval: |args| {
         if args.len() != 1 {
-            panic!("cdr must be called with one argument");
+            panic!("cdr must be called with one argument, got {}", args.len());
         }
         match &args[0] {
             Sexpr::List(list) => {
@@ -70,9 +70,6 @@ const CDR: BuiltIn = BuiltIn {
 const ADD: BuiltIn = BuiltIn {
     symbol: "+",
     eval: |args| {
-        if args.len() != 1 {
-            panic!("cdr must be called with one argument");
-        }
         let out = args.iter().fold(0, |acc, x| match x {
             Sexpr::Int(i) => acc + i,
             // Sexpr::Float(i) => acc as f64 + i,
@@ -82,7 +79,56 @@ const ADD: BuiltIn = BuiltIn {
     },
 };
 
-pub const BUILTINTS: [BuiltIn; 5] = [CONS, CAR, CDR, LIST, ADD];
+const SUB: BuiltIn = BuiltIn {
+    symbol: "-",
+    eval: |args| {
+        let out = args.iter().fold(0, |acc, x| match x {
+            Sexpr::Int(i) => acc - i,
+            // Sexpr::Float(i) => acc as f64 - i,
+            _ => panic!("sub must be called with a list of integers"),
+        });
+        Sexpr::Int(out)
+    },
+};
+
+const MUL: BuiltIn = BuiltIn {
+    symbol: "*",
+    eval: |args| {
+        let out = args.iter().fold(1, |acc, x| match x {
+            Sexpr::Int(i) => acc * i,
+            // Sexpr::Float(i) => acc as f64 * i,
+            _ => panic!("mul must be called with a list of integers"),
+        });
+        Sexpr::Int(out)
+    },
+};
+
+const DIV: BuiltIn = BuiltIn {
+    symbol: "/",
+    eval: |args| {
+        let out = args.iter().fold(1, |acc, x| match x {
+            Sexpr::Int(i) => acc / i,
+            // Sexpr::Float(i) => acc as f64 / i,
+            _ => panic!("div must be called with a list of integers"),
+        });
+        Sexpr::Int(out)
+    },
+};
+
+const EMPTY: BuiltIn = BuiltIn {
+    symbol: "empty",
+    eval: |args| {
+        if args.len() != 1 {
+            panic!("empty must be called with one argument");
+        }
+        match &args[0] {
+            Sexpr::List(list) => Sexpr::Bool(list.is_empty()),
+            _ => panic!("empty must be called with a list as the first argument"),
+        }
+    },
+};
+
+pub const BUILTINTS: [BuiltIn; 6] = [CONS, CAR, CDR, LIST, ADD, EMPTY];
 
 #[cfg(test)]
 mod tests {
