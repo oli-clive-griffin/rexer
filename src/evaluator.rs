@@ -264,115 +264,65 @@ pub fn evaluate(ast: Ast) {
     println!("{:#?}", ast.root.eval(&Scope::new()));
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn test1() {
-//         let ast = AST {
-//             root: Sexpr::List(vec![
-//                 Sexpr::Op(Operator::Add),
-//                 Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-//                 Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-//             ]),
-//         };
-//         let output = ast.root.eval(&Scope::new());
-//         assert_eq!(output, Sexpr::Int(3));
-//     }
+    #[test]
+    fn test1() {
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Int(2),
+            ]),
+        };
+        let output = ast.root.eval(&Scope::new());
+        assert_eq!(output, Sexpr::Int(3));
+    }
 
-//     #[test]
-//     fn test2() {
-//         let ast = AST {
-//             root: Sexpr::List(vec![
-//                 Sexpr::Op(Operator::Add),
-//                 Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-//                 Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-//                 Sexpr::List(vec![
-//                     Sexpr::Op(Operator::Sub),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(3))),
-//                 ]),
-//                 Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(5))),
-//                 Sexpr::List(vec![
-//                     Sexpr::Op(Operator::Mul),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Float(2.3))),
-//                 ]),
-//             ]),
-//         };
-//         let res = ast.root.eval(&Scope::new());
-//         assert_eq!(res, Sexpr::Float(11.3))
-//     }
+    #[test]
+    fn test2() {
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Int(2),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("-".to_string()),
+                    Sexpr::Int(4),
+                    Sexpr::Int(3),
+                ]),
+                Sexpr::Int(5),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("*".to_string()),
+                    Sexpr::Int(1),
+                    // Sexpr::Float(2.3),
+                    Sexpr::Int(2),
+                ]),
+            ]),
+        };
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, Sexpr::Int(11))
+    }
 
-//     #[test]
-//     fn test3() {
-//         let ast = AST {
-//             root: Sexpr::List(vec![
-//                 Sexpr::Let,
-//                 Sexpr::List(vec![
-//                     Sexpr::Ident("x".to_owned()),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-//                 ]),
-//                 Sexpr::List(vec![
-//                     Sexpr::Op(Operator::Mul),
-//                     Sexpr::Ident("x".to_owned()),
-//                     Sexpr::Literal(Literal::Numeric(NumericLiteral::Int(3))),
-//                 ]),
-//             ]),
-//         };
-//         let res = ast.root.eval(&Scope::new());
-//         assert_eq!(res, Sexpr::Int(6))
-//     }
-// }
-
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct Function {
-//     pub params: Vec<String>,
-//     pub body: Sexpr,
-// }
-
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct Macro {
-//     pub params: Vec<String>,
-//     pub body: Sexpr,
-// }
-
-// impl Macro {
-//     fn expand(self, args: &[Sexpr], scope: &Scope) -> Sexpr {
-
-//     }
-// }
-
-// impl Function {}
-
-// impl Sexpr {
-//     fn from_literal(lit: &Literal) -> Sexpr {
-//         match lit {
-//             Literal::Numeric(n) => match n {
-//                 NumericLiteral::Int(i) => Sexpr::Int(*i),
-//                 NumericLiteral::Float(f) => Sexpr::Float(*f),
-//             },
-//             Literal::String(s) => Sexpr::String(s.clone()),
-//             Literal::Boolean(b) => Sexpr::Boolean(*b), // cloned
-//         }
-//     }
-// }
-
-// impl Operator {
-//     fn eval(&self, args: &[Sexpr]) -> Sexpr {
-//         args.iter()
-//             .cloned()
-//             .reduce(|acc, val| self.binary(acc, val)) // cannot return reference to temporary value returns a reference to data owned by the current functionrustcClick for full compiler diagnostic. temporary value created here
-//             .unwrap()
-//     }
-
-//     fn binary(&self, a: Sexpr, b: Sexpr) -> Sexpr {
-//         match self {
-//             Operator::Add => a + b,
-//             Operator::Div => a / b,
-//             Operator::Mul => a * b,
-//             Operator::Sub => a - b,
-//         }
-//     }
-// }
+    #[test]
+    fn test3() {
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("let".to_string()),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("x".to_string()),
+                    Sexpr::Int(2),
+                ]),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("*".to_string()),
+                    Sexpr::Symbol("x".to_string()),
+                    Sexpr::Int(3),
+                ]),
+            ]),
+        };
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, Sexpr::Int(6))
+    }
+}

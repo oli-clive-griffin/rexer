@@ -80,12 +80,19 @@ const ADD: BuiltIn = BuiltIn {
 const SUB: BuiltIn = BuiltIn {
     symbol: "-",
     eval: |args| {
-        let out = args.iter().fold(0, |acc, x| match x {
-            Sexpr::Int(i) => acc - i,
-            // Sexpr::Float(i) => acc as f64 - i,
+        let mut init = match args[0] {
+            Sexpr::Int(i) => i,
+            // Sexpr::Float(i) => i as f64,
             _ => panic!("sub must be called with a list of integers"),
-        });
-        Sexpr::Int(out)
+        };
+        for i in 1..args.len() {
+            match args[i] {
+                Sexpr::Int(j) => init -= j,
+                // Sexpr::Float(j) => init -= j as f64,
+                _ => panic!("sub must be called with a list of integers"),
+            }
+        }
+        Sexpr::Int(init)
     },
 };
 
@@ -104,12 +111,19 @@ const MUL: BuiltIn = BuiltIn {
 const DIV: BuiltIn = BuiltIn {
     symbol: "/",
     eval: |args| {
-        let out = args.iter().fold(1, |acc, x| match x {
-            Sexpr::Int(i) => acc / i,
-            // Sexpr::Float(i) => acc as f64 / i,
+        let mut init = match args[0] {
+            Sexpr::Int(i) => i,
+            // Sexpr::Float(i) => i as f64,
             _ => panic!("div must be called with a list of integers"),
-        });
-        Sexpr::Int(out)
+        };
+        for i in 1..args.len() {
+            match args[i] {
+                Sexpr::Int(j) => init /= j,
+                // Sexpr::Float(j) => init /= j as f64,
+                _ => panic!("div must be called with a list of integers"),
+            }
+        }
+        Sexpr::Int(init)
     },
 };
 
@@ -131,23 +145,6 @@ pub const BUILTINTS: [BuiltIn; 9] = [CONS, CAR, CDR, LIST, EMPTY, ADD, SUB, MUL,
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // #[test]
-    // fn test_quote() {
-    //     let args = vec![Sexpr::List(vec![
-    //         Sexpr::Int(1),
-    //         Sexpr::Int(2),
-    //         Sexpr::Int(3),
-    //     ])];
-    //     assert_eq!(
-    //         QUOTE.eval(&args),
-    //         Sexpr::List(vec![
-    //             Sexpr::Int(1),
-    //             Sexpr::Int(2),
-    //             Sexpr::Int(3),
-    //         ])
-    //     );
-    // }
 
     #[test]
     fn test_cons() {
