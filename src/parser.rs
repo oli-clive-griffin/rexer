@@ -54,15 +54,6 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
             let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
             (s_expr, i_diff + 1)
         }
-        // Token::Operator(op) => {
-        //     let op = match op {
-        //         Operator::Add => Sexpr::Symbol("+".to_string()),
-        //         Operator::Sub => Sexpr::Symbol("-".to_string()),
-        //         Operator::Mul => Sexpr::Symbol("*".to_string()),
-        //         Operator::Div => Sexpr::Symbol("/".to_string()), // use a proper enum pattern
-        //     };
-        //     (op, 1)
-        // }
         Token::Literal(lit) => {
             let sexpr = match lit {
                 Literal::Numeric(num) => match num {
