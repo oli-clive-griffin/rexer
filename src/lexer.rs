@@ -30,7 +30,7 @@ pub enum Token {
     Parenthesis(LR),
     Operator(Operator),
     Literal(Literal),
-    Identifier(String),
+    Symbol(String),
     Comma,
 }
 
@@ -39,7 +39,7 @@ impl Token {
         match s.as_str() {
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
-            _ => Token::Identifier(s.to_string()),
+            _ => Token::Symbol(s.to_string()),
         }
     }
 
@@ -79,8 +79,7 @@ enum LexerState {
 }
 
 fn remove_comments(s: String) -> String {
-    s 
-        .trim()
+    s.trim()
         .split('\n')
         .filter(|line| !line.trim().starts_with(';'))
         .collect::<Vec<&str>>()
@@ -187,7 +186,7 @@ mod tests {
     #[test]
     fn test_identifier() {
         let input = "variableName".to_string();
-        let expected = vec![Token::Identifier("variableName".to_string())];
+        let expected = vec![Token::Symbol("variableName".to_string())];
         assert_eq!(lex(&input), expected);
     }
 
@@ -209,8 +208,8 @@ mod tests {
         let input = "(define x 10)".to_string();
         let expected = vec![
             Token::Parenthesis(LR::Left),
-            Token::Identifier("define".to_string()),
-            Token::Identifier("x".to_string()),
+            Token::Symbol("define".to_string()),
+            Token::Symbol("x".to_string()),
             Token::Literal(Literal::Numeric(NumericLiteral::Int(10))),
             Token::Parenthesis(LR::Right),
         ];

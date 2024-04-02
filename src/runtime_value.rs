@@ -1,21 +1,25 @@
-use crate::{builtins::BuiltIn, evaluator::Function};
+use crate::{
+    builtins::BuiltIn,
+    evaluator::{Function, Macro},
+};
 use core::panic;
 use std::ops;
 
 use crate::lexer::Operator;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RuntimeValue {
-    Int(i64),
-    Float(f64),
-    Boolean(bool),
-    String(String),
-    Symbol(String),
-    Function(Function),
-    Op(Operator),
-    List(Vec<RuntimeValue>),
-    BuiltIn(BuiltIn),
-}
+// pub enum RuntimeValue {
+//     Int(i64),
+//     Float(f64),
+//     Boolean(bool),
+//     String(String),
+//     Symbol(String),
+//     Function(Function),
+//     Macro(Macro),
+//     Op(Operator),
+//     List(Vec<RuntimeValue>),
+//     BuiltIn(BuiltIn),
+// }
 
 impl RuntimeValue {
     pub fn bool(&self) -> bool {
