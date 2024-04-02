@@ -4,7 +4,7 @@
         (lambda (f list)
             (let
                 (inner (lambda (ilist acc)
-                            (if (empty ilist)
+                            (if (empty? ilist)
                                 acc
                                 (inner
                                     (cdr ilist)

@@ -1,8 +1,8 @@
-pub use crate::lexer::{Literal, NumericLiteral, Operator};
+pub use crate::lexer::{Literal, NumericLiteral};
 use crate::{builtins::BuiltIn, lexer::{Token, LR}};
 
 #[derive(Debug, PartialEq)]
-pub struct AST {
+pub struct Ast {
     pub root: Sexpr,
 }
 
@@ -17,7 +17,7 @@ pub enum Sexpr {
     Lambda {
         parameters: Vec<String>,
         body: Box<Sexpr>,
-    }, // potentially make "Symbol" a separate type
+    },
     Macro {
         parameters: Vec<String>,
         body: Box<Sexpr>,
@@ -54,15 +54,15 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
             let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
             (s_expr, i_diff + 1)
         }
-        Token::Operator(op) => {
-            let op = match op {
-                Operator::Add => Sexpr::Symbol("+".to_string()),
-                Operator::Sub => Sexpr::Symbol("-".to_string()),
-                Operator::Mul => Sexpr::Symbol("*".to_string()),
-                Operator::Div => Sexpr::Symbol("/".to_string()), // use a proper enum pattern
-            };
-            (op, 1)
-        }
+        // Token::Operator(op) => {
+        //     let op = match op {
+        //         Operator::Add => Sexpr::Symbol("+".to_string()),
+        //         Operator::Sub => Sexpr::Symbol("-".to_string()),
+        //         Operator::Mul => Sexpr::Symbol("*".to_string()),
+        //         Operator::Div => Sexpr::Symbol("/".to_string()), // use a proper enum pattern
+        //     };
+        //     (op, 1)
+        // }
         Token::Literal(lit) => {
             let sexpr = match lit {
                 Literal::Numeric(num) => match num {
@@ -85,10 +85,10 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
     }
 }
 
-pub fn parse(tokens: Vec<Token>) -> AST {
+pub fn parse(tokens: Vec<Token>) -> Ast {
     let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
     assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
-    AST { root: s_expr }
+    Ast { root: s_expr }
 }
 
 #[cfg(test)]
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test2() {
-        let AST { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
+        let Ast { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
 
         assert_eq!(
             root,

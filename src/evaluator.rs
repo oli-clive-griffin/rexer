@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::iter;
 
 use crate::builtins::BUILTINTS;
-use crate::parser::{Sexpr, AST};
+use crate::parser::{Ast, Sexpr};
 
 #[derive(Debug, Clone, PartialEq)]
 struct Scope {
@@ -38,7 +38,7 @@ impl Sexpr {
             Sexpr::Symbol(sym) => scope
                 .bindings
                 .get(&sym)
-                .expect(&format!("Symbol not found in scope: {}", sym))
+                .unwrap_or_else(|| panic!("Symbol not found in scope: {}", sym))
                 .clone(),
             Sexpr::String(_)
             | Sexpr::Bool(_)
@@ -61,16 +61,15 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
     match &list[0] {
         // handle special forms:
         Sexpr::Symbol(symbol) => match symbol.as_str() {
-            "lambda" => return eval_rest_as_function_declaration(&list[1..], scope),
-            "macro" => return eval_rest_as_macro_declaration(&list[1..], scope),
-            "if" => return eval_rest_as_if(&list[1..], scope),
-            "let" => return eval_rest_as_let(&list[1..], scope),
-            "quote" => return eval_rest_as_quote(&list[1..], scope),
+            "lambda" => eval_rest_as_function_declaration(&list[1..], scope),
+            "macro" => eval_rest_as_macro_declaration(&list[1..], scope),
+            "if" => eval_rest_as_if(&list[1..], scope),
+            "let" => eval_rest_as_let(&list[1..], scope),
+            "quote" => eval_rest_as_quote(&list[1..]),
             _ => {
                 let head = list[0].clone().eval(scope);
                 eval_list(
                     iter::once(head)
-                        .into_iter()
                         .chain(list[1..].iter().cloned())
                         .collect::<Vec<Sexpr>>(),
                     scope,
@@ -99,7 +98,6 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
             body.clone().eval(&func_scope)
         }
         Sexpr::Macro { parameters, body } => {
-
             // DON'T EVALUATE THE MACRO BODY
             let arguments = &list[1..];
 
@@ -134,7 +132,6 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
                 .map(|arg| arg.eval(scope))
                 .collect::<Vec<Sexpr>>();
             builtin.eval(&arguments)
-
         }
     }
 }
@@ -148,10 +145,10 @@ fn eval_rest_as_function_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
     // actually should be easy as everything is pure and passed by value
     let _ = scope;
 
-    return Sexpr::Lambda {
+    Sexpr::Lambda {
         parameters: args,
         body: Box::new(fn_body.clone()),
-    };
+    }
 }
 
 fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
@@ -161,10 +158,10 @@ fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
     // todo substitute scope into fn_body
     let _ = scope;
 
-    return Sexpr::Macro {
+    Sexpr::Macro {
         parameters: args,
         body: Box::new(fn_body.clone()),
-    };
+    }
 }
 
 fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> Sexpr {
@@ -178,9 +175,9 @@ fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Sexpr {
     if rest.len() != 3 {
         panic!("malformed if statement: Must have 3 arguments");
     }
-    let condition = (&rest[0]).clone();
-    let if_body = (&rest[1]).clone();
-    let else_body = (&rest[2]).clone();
+    let condition = rest[0].clone();
+    let if_body = rest[1].clone();
+    let else_body = rest[2].clone();
 
     // TODO: encapse this is Sexpr.bool()
     if let Sexpr::Bool(cond) = condition.eval(scope) {
@@ -192,18 +189,16 @@ fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Sexpr {
 
 /// takes a list of nodes of the form (Node::Quote, Node::List(..))
 /// returns a list of the evaulat
-fn eval_rest_as_quote(list: &[Sexpr], scope: &Scope) -> Sexpr {
+fn eval_rest_as_quote(list: &[Sexpr]) -> Sexpr {
     if list.len() != 1 {
         panic!("quote must be called with one argument");
     }
-    quote(list[0].clone(), scope)
+    quote(list[0].clone())
 }
 
-fn quote(node: Sexpr, scope: &Scope) -> Sexpr {
+fn quote(node: Sexpr) -> Sexpr {
     match node {
-        Sexpr::List(list) => {
-            Sexpr::List(list.iter().map(|node| quote(node.clone(), scope)).collect())
-        }
+        Sexpr::List(list) => Sexpr::List(list.iter().map(|node| quote(node.clone())).collect()),
         Sexpr::Lambda {
             parameters: _,
             body: _,
@@ -265,7 +260,7 @@ fn parse_as_args(expr: &Sexpr) -> Vec<String> {
 /// and just evaluate it.
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
-pub fn evaluate(ast: AST) {
+pub fn evaluate(ast: Ast) {
     println!("{:#?}", ast.root.eval(&Scope::new()));
 }
 

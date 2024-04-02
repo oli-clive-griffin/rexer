@@ -1,5 +1,3 @@
-// use crate::runtime_value::Sexpr;
-
 use crate::parser::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +114,7 @@ const DIV: BuiltIn = BuiltIn {
 };
 
 const EMPTY: BuiltIn = BuiltIn {
-    symbol: "empty",
+    symbol: "empty?",
     eval: |args| {
         if args.len() != 1 {
             panic!("empty must be called with one argument");
