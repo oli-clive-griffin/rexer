@@ -128,7 +128,7 @@ const EMPTY: BuiltIn = BuiltIn {
     },
 };
 
-pub const BUILTINTS: [BuiltIn; 6] = [CONS, CAR, CDR, LIST, ADD, EMPTY];
+pub const BUILTINTS: [BuiltIn; 9] = [CONS, CAR, CDR, LIST, EMPTY, ADD, SUB, MUL, DIV];
 
 #[cfg(test)]
 mod tests {
