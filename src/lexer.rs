@@ -4,14 +4,6 @@ pub enum LR {
     Right,
 }
 
-// #[derive(Debug, PartialEq, Clone, Copy)]
-// pub enum Operator {
-//     Add,
-//     Sub,
-//     Mul,
-//     Div,
-// }
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum NumericLiteral {
     Float(f64),
@@ -28,7 +20,6 @@ pub enum Literal {
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Parenthesis(LR),
-    // Operator(Operator),
     Literal(Literal),
     Symbol(String),
     Comma,
@@ -71,7 +62,7 @@ enum LexerState {
     None, // single char tokens
     NumberLiteral(String),
     StringLiteral(String), // no escaping, could do by `StringLiteral(Escaped)`
-    Symbol(String),    // could resolve to a keyword, identifier, or boolean
+    Symbol(String), // could resolve to a keyword, identifier, or boolean
 }
 
 fn remove_comments(s: String) -> String {

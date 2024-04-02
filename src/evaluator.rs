@@ -40,19 +40,7 @@ impl Sexpr {
                 .get(&sym)
                 .unwrap_or_else(|| panic!("Symbol not found in scope: {}", sym))
                 .clone(),
-            Sexpr::String(_)
-            | Sexpr::Bool(_)
-            | Sexpr::Int(_)
-            | Sexpr::Float(_)
-            | Sexpr::Lambda {
-                parameters: _,
-                body: _,
-            }
-            | Sexpr::Macro {
-                parameters: _,
-                body: _,
-            }
-            | Sexpr::BuiltIn(_) => self,
+            _ => self,
         }
     }
 }
