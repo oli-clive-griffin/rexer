@@ -1,21 +1,31 @@
-pub use crate::lexer::{Literal, NumericLiteral, Operator};
-use crate::lexer::{Token, LR};
+pub use crate::lexer::{Literal, NumericLiteral};
+use crate::{builtins::BuiltIn, lexer::{Token, LR}};
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Node {
-    List(Vec<Node>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
-    Ident(String),
-    Literal(Literal),
-    Op(Operator),
-    Fn,
-    If,
-    Let,
-    Quote,
-    // impl later:
-    // Def,
+#[derive(Debug, PartialEq)]
+pub struct Ast {
+    pub root: Sexpr,
 }
 
-fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Sexpr {
+    List(Vec<Sexpr>), // doesn't allow for quoting, but this does: // List(Quoted, Vec<SExpr>), // impl later
+    Symbol(String),
+    String(String),
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Lambda {
+        parameters: Vec<String>,
+        body: Box<Sexpr>,
+    },
+    Macro {
+        parameters: Vec<String>,
+        body: Box<Sexpr>,
+    },
+    BuiltIn(BuiltIn)
+}
+
+fn parse_list(rest_tokens: &[Token]) -> (Sexpr, usize) {
     let mut list = vec![];
 
     let mut i = 0;
@@ -33,10 +43,10 @@ fn parse_list(rest_tokens: &[Token]) -> (Node, usize) {
         i += i_diff;
     }
 
-    (Node::List(list), i)
+    (Sexpr::List(list), i)
 }
 
-fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
+fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
     let first = &rest_tokens[0];
 
     match first {
@@ -44,15 +54,27 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
             let (s_expr, i_diff) = parse_list(&rest_tokens[1..]);
             (s_expr, i_diff + 1)
         }
-        Token::Operator(op) => (Node::Op(*op), 1), // copied
-        Token::Literal(lit) => (Node::Literal(lit.clone()), 1),
-        Token::Identifier(ident) => match ident.as_str() {
-            "fn" => (Node::Fn, 1),
-            "if" => (Node::If, 1),
-            "let" => (Node::Let, 1),
-            "quote" => (Node::Quote, 1),
-            _ => (Node::Ident(ident.clone()), 1),
-        },
+        // Token::Operator(op) => {
+        //     let op = match op {
+        //         Operator::Add => Sexpr::Symbol("+".to_string()),
+        //         Operator::Sub => Sexpr::Symbol("-".to_string()),
+        //         Operator::Mul => Sexpr::Symbol("*".to_string()),
+        //         Operator::Div => Sexpr::Symbol("/".to_string()), // use a proper enum pattern
+        //     };
+        //     (op, 1)
+        // }
+        Token::Literal(lit) => {
+            let sexpr = match lit {
+                Literal::Numeric(num) => match num {
+                    NumericLiteral::Int(i) => Sexpr::Int(*i),
+                    NumericLiteral::Float(f) => Sexpr::Float(*f),
+                },
+                Literal::String(s) => Sexpr::String(s.clone()),
+                Literal::Boolean(b) => Sexpr::Bool(*b),
+            };
+            (sexpr, 1)
+        }
+        Token::Symbol(sym) => (Sexpr::Symbol(sym.clone()), 1),
         // These should not happen because they are handled in parse_list
         // could this be handled better by tightening up the types?
         // basically it's the responsibility of parse_list to handle these
@@ -63,10 +85,10 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Node, usize) {
     }
 }
 
-pub fn parse(tokens: Vec<Token>) -> Node {
+pub fn parse(tokens: Vec<Token>) -> Ast {
     let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
     assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
-    s_expr
+    Ast { root: s_expr }
 }
 
 #[cfg(test)]
@@ -79,25 +101,22 @@ mod tests {
     fn test1() {
         let input = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
 
-        assert_eq!(
-            parse(input),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(123)))
-        );
+        assert_eq!(parse(input).root, Sexpr::Int(123));
     }
 
     #[test]
     fn test2() {
-        let root = parse(lex(&"(+ 1 (- 4 3))".to_string()));
+        let Ast { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
 
         assert_eq!(
             root,
-            Node::List(vec![
-                Node::Op(Operator::Add),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                Node::List(vec![
-                    Node::Op(Operator::Sub),
-                    Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-                    Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+            Sexpr::List(vec![
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(1),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("-".to_string()),
+                    Sexpr::Int(4),
+                    Sexpr::Int(3)
                 ])
             ])
         );

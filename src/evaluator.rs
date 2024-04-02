@@ -1,249 +1,328 @@
 use core::panic;
 use std::collections::HashMap;
+use std::iter;
 
 use crate::builtins::BUILTINTS;
-use crate::lexer::{Literal, NumericLiteral, Operator};
-use crate::parser::Node;
-use crate::runtime_value::Function;
-use crate::runtime_value::RuntimeValue;
-use crate::structural_parser::{Form, SpecialForm, StructuredNode};
+use crate::parser::{Ast, Sexpr};
 
+#[derive(Debug, Clone, PartialEq)]
 struct Scope {
     // could make this a list of hashmaps that's search from the top down
     // would negate the need to duplicate the scope when adding items
-    bindings: HashMap<String, RuntimeValue>,
+    bindings: HashMap<String, Sexpr>,
 }
 
 impl Scope {
     fn new() -> Scope {
         Scope {
             bindings: HashMap::from_iter(
-                BUILTINTS.map(|(name, builtin)| (name.to_owned(), RuntimeValue::BuiltIn(builtin))),
+                BUILTINTS.map(|builtin| (builtin.symbol.to_string(), Sexpr::BuiltIn(builtin))),
             ),
         }
     }
 
-    fn with_bindings(&self, bindings: Vec<(String, RuntimeValue)>) -> Scope {
+    fn with_bindings(&self, bindings: &[(String, Sexpr)]) -> Scope {
         let mut new_bindings = self.bindings.clone();
-        new_bindings.extend(bindings);
+        new_bindings.extend(bindings.iter().cloned());
+
         Scope {
             bindings: new_bindings,
         }
     }
 }
 
-impl Function {
-    fn eval(self, args: &[RuntimeValue], scope: &Scope) -> RuntimeValue {
-        if self.params.len() != args.len() {
-            panic!("Function called with incorrect number of arguments");
-        }
-
-        // zip the args and params together
-        let bindings = self
-            .params
-            .iter()
-            .cloned()
-            .zip(args.iter().cloned())
-            .collect::<Vec<(String, RuntimeValue)>>();
-
-        self.body.eval(&scope.with_bindings(bindings))
-    }
-}
-
-impl RuntimeValue {
-    fn from_literal(lit: Literal) -> RuntimeValue {
-        match lit {
-            Literal::Numeric(n) => match n {
-                NumericLiteral::Int(i) => RuntimeValue::Int(i),
-                NumericLiteral::Float(f) => RuntimeValue::Float(f),
-            },
-            Literal::String(s) => RuntimeValue::String(s),
-            Literal::Boolean(b) => RuntimeValue::Boolean(b),
-        }
-    }
-}
-
-impl Operator {
-    fn eval(&self, args: &[RuntimeValue]) -> RuntimeValue {
-        args.iter()
-            .cloned()
-            .reduce(|acc, val| self.binary(acc, val))
-            .unwrap()
-    }
-
-    fn binary(&self, a: RuntimeValue, b: RuntimeValue) -> RuntimeValue {
+impl Sexpr {
+    fn eval(self, scope: &Scope) -> Sexpr {
         match self {
-            Operator::Add => a + b,
-            Operator::Div => a / b,
-            Operator::Mul => a * b,
-            Operator::Sub => a - b,
-        }
-    }
-}
-
-impl StructuredNode {
-    fn eval(self, scope: &Scope) -> RuntimeValue {
-        match self {
-            StructuredNode::Form(form) => form.eval(scope),
-            StructuredNode::Ident(ident) => scope
+            Sexpr::List(list) => eval_list(list, scope),
+            Sexpr::Symbol(sym) => scope
                 .bindings
-                .get(&ident)
-                .unwrap_or_else(|| panic!("Identifier {ident} not found in scope"))
+                .get(&sym)
+                .unwrap_or_else(|| panic!("Symbol not found in scope: {}", sym))
                 .clone(),
-            StructuredNode::Literal(lit) => RuntimeValue::from_literal(lit),
-            StructuredNode::Op(op) => RuntimeValue::Op(op),
+            Sexpr::String(_)
+            | Sexpr::Bool(_)
+            | Sexpr::Int(_)
+            | Sexpr::Float(_)
+            | Sexpr::Lambda {
+                parameters: _,
+                body: _,
+            }
+            | Sexpr::Macro {
+                parameters: _,
+                body: _,
+            }
+            | Sexpr::BuiltIn(_) => self,
         }
     }
 }
 
-impl SpecialForm {
-    fn eval(self, scope: &Scope) -> RuntimeValue {
-        match self {
-            SpecialForm::Fn(form) => {
-                // form.args
-                // let args = parse_as_args(&form.args);
-                // let fn_body = &form.body;
+fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
+    match &list[0] {
+        // handle special forms:
+        Sexpr::Symbol(symbol) => match symbol.as_str() {
+            "lambda" => eval_rest_as_function_declaration(&list[1..], scope),
+            "macro" => eval_rest_as_macro_declaration(&list[1..], scope),
+            "if" => eval_rest_as_if(&list[1..], scope),
+            "let" => eval_rest_as_let(&list[1..], scope),
+            "quote" => eval_rest_as_quote(&list[1..]),
+            _ => {
+                let head = list[0].clone().eval(scope);
+                eval_list(
+                    iter::once(head)
+                        .chain(list[1..].iter().cloned())
+                        .collect::<Vec<Sexpr>>(),
+                    scope,
+                )
+            }
+        },
+        Sexpr::Lambda { parameters, body } => {
+            let arguments = list[1..]
+                .iter()
+                .cloned()
+                .map(|arg| arg.eval(scope))
+                .collect::<Vec<Sexpr>>();
 
-                // todo substitute scope into fn_body
-                // let _ = scope;
+            if parameters.len() != arguments.len() {
+                panic!("Function called with incorrect number of arguments");
+            }
 
-                RuntimeValue::Function(Function {
-                    params: form.args,
-                    body: *form.body,
-                })
+            // zip the args and params together
+            let bindings = (*parameters)
+                .iter()
+                .cloned()
+                .zip(arguments.iter().cloned())
+                .collect::<Vec<(String, Sexpr)>>();
+
+            let func_scope = scope.with_bindings(&bindings);
+            body.clone().eval(&func_scope)
+        }
+        Sexpr::Macro { parameters, body } => {
+            // DON'T EVALUATE THE MACRO BODY
+            let arguments = &list[1..];
+
+            if parameters.len() != arguments.len() {
+                panic!("Macro called with incorrect number of arguments");
             }
-            SpecialForm::If(form) => {
-                if form.condition.eval(scope).bool() {
-                    form.if_body.eval(scope)
-                } else {
-                    form.else_body.eval(scope)
-                }
-            }
-            SpecialForm::Let(form) => {
-                let bindings = form_let_bindings(&form.bindings, scope);
-                form.expr.eval(&scope.with_bindings(bindings))
-            }
-            SpecialForm::Quote(form) => quote(form.expr),
+
+            // zip the args and params together
+            let bindings = parameters
+                .iter()
+                .cloned()
+                .zip(arguments.iter().cloned())
+                .collect::<Vec<(String, Sexpr)>>();
+
+            let macro_scope = scope.with_bindings(&bindings);
+            body.clone().eval(&macro_scope).eval(scope)
+        }
+        Sexpr::List(list) => eval_list(
+            iter::once(list[0].clone().eval(scope))
+                .chain(list[1..].iter().cloned())
+                .collect::<Vec<Sexpr>>(),
+            scope,
+        ),
+        Sexpr::String(_) => panic!("Cannot call string value"),
+        Sexpr::Bool(_) => panic!("Cannot call boolean value"),
+        Sexpr::Int(_) => panic!("Cannot call int value"),
+        Sexpr::Float(_) => panic!("Cannot call float value"),
+        Sexpr::BuiltIn(builtin) => {
+            let arguments = list[1..]
+                .iter()
+                .cloned()
+                .map(|arg| arg.eval(scope))
+                .collect::<Vec<Sexpr>>();
+            builtin.eval(&arguments)
         }
     }
 }
 
-impl Form {
-    fn eval(self, scope: &Scope) -> RuntimeValue {
-        match self {
-            Form::Special(form) => form.eval(scope),
-            Form::Regular(node) => eval_normal_form(node, scope),
-        }
+fn eval_rest_as_function_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
+    let args = parse_as_args(&rest[0]);
+    let fn_body = &rest[1];
+
+    // TODO closues ???
+    // substitute scope into fn_body ???
+    // actually should be easy as everything is pure and passed by value
+    let _ = scope;
+
+    Sexpr::Lambda {
+        parameters: args,
+        body: Box::new(fn_body.clone()),
     }
 }
 
-fn eval_normal_form(list: Vec<StructuredNode>, scope: &Scope) -> RuntimeValue {
-    let vals = list
-        .iter()
-        .map(|arg| arg.clone().eval(scope))
-        .collect::<Vec<RuntimeValue>>();
+fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
+    let args = parse_as_args(&rest[0]);
+    let fn_body = &rest[1];
 
-    let head_val = vals[0].clone();
-    let args_vals = &vals[1..];
+    // todo substitute scope into fn_body
+    let _ = scope;
 
-    match head_val {
-        RuntimeValue::Op(op) => op.eval(args_vals),
-        RuntimeValue::BuiltIn(builtin) => builtin.eval(args_vals),
-        RuntimeValue::Function(func) => func.clone().eval(args_vals, scope),
-        RuntimeValue::Int(_) => panic!("Cannot call int value. list: {:?}", list),
-        RuntimeValue::List(_) => panic!("Cannot call list value"),
-        RuntimeValue::Float(_) => panic!("Cannot call float value"),
-        RuntimeValue::String(_) => panic!("Cannot call string value"),
-        RuntimeValue::Boolean(_) => panic!("Cannot call boolean value"),
-        RuntimeValue::Symbol(_) => panic!("Cannot call symbol value"),
+    Sexpr::Macro {
+        parameters: args,
+        body: Box::new(fn_body.clone()),
     }
 }
 
-fn quote(node: Node) -> RuntimeValue {
+fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> Sexpr {
+    let binding_exprs = rest[..rest.len() - 1].to_vec();
+    let expr = rest.last().expect("let must have a body");
+    let bindings = generate_let_bindings(binding_exprs, scope);
+    expr.clone().eval(&scope.with_bindings(&bindings))
+}
+
+fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Sexpr {
+    if rest.len() != 3 {
+        panic!("malformed if statement: Must have 3 arguments");
+    }
+    let condition = rest[0].clone();
+    let if_body = rest[1].clone();
+    let else_body = rest[2].clone();
+
+    // TODO: encapse this is Sexpr.bool()
+    if let Sexpr::Bool(cond) = condition.eval(scope) {
+        (if cond { if_body } else { else_body }).eval(scope)
+    } else {
+        panic!("If condition must be a boolean");
+    }
+}
+
+/// takes a list of nodes of the form (Node::Quote, Node::List(..))
+/// returns a list of the evaulat
+fn eval_rest_as_quote(list: &[Sexpr]) -> Sexpr {
+    if list.len() != 1 {
+        panic!("quote must be called with one argument");
+    }
+    quote(list[0].clone())
+}
+
+fn quote(node: Sexpr) -> Sexpr {
     match node {
-        Node::Ident(ident) => RuntimeValue::Symbol(ident.clone()),
-        Node::Literal(lit) => RuntimeValue::from_literal(lit),
-        Node::Op(op) => RuntimeValue::Op(op),
-        Node::List(node_list) => RuntimeValue::List(node_list.iter().cloned().map(quote).collect()),
-        Node::Fn => todo!("not sure how we should handle quoting `Node::Fn`"),
-        Node::If => todo!("not sure how we should handle quoting `Node::If`"),
-        Node::Let => todo!("not sure how we should handle quoting `Node::Let`"),
-        Node::Quote => todo!("not sure how we should handle quoting `Node::Quote`"),
+        Sexpr::List(list) => Sexpr::List(list.iter().map(|node| quote(node.clone())).collect()),
+        Sexpr::Lambda {
+            parameters: _,
+            body: _,
+        } => {
+            panic!("this shouldn't happen (quoting a Lambda value)")
+        }
+        Sexpr::Macro {
+            parameters: _,
+            body: _,
+        } => {
+            panic!("this shouldn't happen (quoting a Macro value)")
+        }
+        Sexpr::BuiltIn(_) => {
+            panic!("this shouldn't happen (quoting a BuiltIn value)")
+        }
+        Sexpr::Symbol(_) | Sexpr::String(_) | Sexpr::Bool(_) | Sexpr::Int(_) | Sexpr::Float(_) => {
+            node
+        }
     }
 }
 
-fn form_let_bindings(
-    list: &[(String, StructuredNode)],
-    scope: &Scope,
-) -> Vec<(String, RuntimeValue)> {
+fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Vec<(String, Sexpr)> {
     list.iter()
         .cloned()
-        .map(|(name, expr)| (name, expr.eval(scope)))
-        .collect::<Vec<(String, RuntimeValue)>>()
+        .map(|node| match node {
+            Sexpr::List(nodes) => {
+                if nodes.len() != 2 {
+                    panic!("let binding must be a list of two elements");
+                }
+                if let Sexpr::Symbol(ident) = &nodes[0] {
+                    let val = nodes[1].clone().eval(scope);
+                    (ident.clone(), val.clone())
+                } else {
+                    panic!("left side of let binding must be an identifier");
+                }
+            }
+            _ => panic!("All bindings must be lists"),
+        })
+        .collect::<Vec<(String, Sexpr)>>()
+}
+
+fn parse_as_args(expr: &Sexpr) -> Vec<String> {
+    if let Sexpr::List(args) = expr {
+        args.iter()
+            .map(|e| {
+                if let Sexpr::Symbol(ident) = e {
+                    ident.clone()
+                } else {
+                    panic!("Function arguments must be identifiers")
+                }
+            })
+            .collect::<Vec<String>>()
+    } else {
+        panic!("Function arguments must be a list")
+    }
 }
 
 /// for now, assume that the AST is a single SExpr
 /// and just evaluate it.
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
-pub fn evaluate(ast: StructuredNode) {
-    println!("{:#?}", ast.eval(&Scope::new()));
+pub fn evaluate(ast: Ast) {
+    println!("{:#?}", ast.root.eval(&Scope::new()));
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::structural_parser::structure_ast;
-
     use super::*;
 
     #[test]
     fn test1() {
-        let ast = structure_ast(Node::List(vec![
-            Node::Op(Operator::Add),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-        ]));
-        let output = ast.eval(&Scope::new());
-        assert_eq!(output, RuntimeValue::Int(3));
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Int(2),
+            ]),
+        };
+        let output = ast.root.eval(&Scope::new());
+        assert_eq!(output, Sexpr::Int(3));
     }
 
     #[test]
     fn test2() {
-        let ast = structure_ast(Node::List(vec![
-            Node::Op(Operator::Add),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
-            Node::List(vec![
-                Node::Op(Operator::Sub),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(4))),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Int(2),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("-".to_string()),
+                    Sexpr::Int(4),
+                    Sexpr::Int(3),
+                ]),
+                Sexpr::Int(5),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("*".to_string()),
+                    Sexpr::Int(1),
+                    // Sexpr::Float(2.3),
+                    Sexpr::Int(2),
+                ]),
             ]),
-            Node::Literal(Literal::Numeric(NumericLiteral::Int(5))),
-            Node::List(vec![
-                Node::Op(Operator::Mul),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(1))),
-                Node::Literal(Literal::Numeric(NumericLiteral::Float(2.3))),
-            ]),
-        ]));
-        let res = ast.eval(&Scope::new());
-        assert_eq!(res, RuntimeValue::Float(11.3))
+        };
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, Sexpr::Int(11))
     }
 
     #[test]
     fn test3() {
-        let ast = structure_ast(Node::List(vec![
-            Node::Let,
-            Node::List(vec![
-                Node::Ident("x".to_owned()),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(2))),
+        let ast = Ast {
+            root: Sexpr::List(vec![
+                Sexpr::Symbol("let".to_string()),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("x".to_string()),
+                    Sexpr::Int(2),
+                ]),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("*".to_string()),
+                    Sexpr::Symbol("x".to_string()),
+                    Sexpr::Int(3),
+                ]),
             ]),
-            Node::List(vec![
-                Node::Op(Operator::Mul),
-                Node::Ident("x".to_owned()),
-                Node::Literal(Literal::Numeric(NumericLiteral::Int(3))),
-            ]),
-        ]));
-        let res = ast.eval(&Scope::new());
-        assert_eq!(res, RuntimeValue::Int(6))
+        };
+        let res = ast.root.eval(&Scope::new());
+        assert_eq!(res, Sexpr::Int(6))
     }
 }
