@@ -95,16 +95,17 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
                 .zip(arguments.iter().cloned())
                 .collect::<Vec<(String, Sexpr)>>();
 
-            body.clone().eval(&scope.with_bindings(&bindings))
+            let func_scope = scope.with_bindings(&bindings);
+            body.clone().eval(&func_scope)
         }
         Sexpr::Macro { parameters, body } => {
+
+            // DON'T EVALUATE THE MACRO BODY
             let arguments = &list[1..];
 
             if parameters.len() != arguments.len() {
                 panic!("Macro called with incorrect number of arguments");
             }
-
-            let macrod = body.clone().eval(&scope); // new_scope);
 
             // zip the args and params together
             let bindings = parameters
@@ -113,7 +114,8 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
                 .zip(arguments.iter().cloned())
                 .collect::<Vec<(String, Sexpr)>>();
 
-            macrod.eval(&scope.with_bindings(&bindings))
+            let macro_scope = scope.with_bindings(&bindings);
+            body.clone().eval(&macro_scope).eval(scope)
         }
         Sexpr::List(list) => eval_list(
             iter::once(list[0].clone().eval(scope))

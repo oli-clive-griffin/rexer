@@ -1,4 +1,5 @@
 (let
     (inc (lambda (x) (+ 1)))
-    (switch (macro (a b) (quote (b a))))
-    (switch 3 inc))
+    (switch (macro (a b) (list b a)))
+    (z 4)
+    (switch z inc))
