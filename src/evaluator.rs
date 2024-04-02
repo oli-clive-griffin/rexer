@@ -7,8 +7,6 @@ use crate::parser::{Ast, Sexpr};
 
 #[derive(Debug, Clone, PartialEq)]
 struct Scope {
-    // could make this a list of hashmaps that's search from the top down
-    // would negate the need to duplicate the scope when adding items
     bindings: HashMap<String, Sexpr>,
 }
 
@@ -94,13 +92,19 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
             }
 
             // zip the args and params together
+            // "parameters" is now a list of strings which refer to the **un-evaluated** arguments
+            // i.e. (macro (switch a b) (list b a)
+            //      (switch 1 x) -> { a: Int(1), b: Symbol("x") }
             let bindings = parameters
                 .iter()
                 .cloned()
                 .zip(arguments.iter().cloned())
                 .collect::<Vec<(String, Sexpr)>>();
 
+            // create a new scope with the bindings for inside the macro
             let macro_scope = scope.with_bindings(&bindings);
+
+            // then evaluate the result of the macro, with the original scope
             body.clone().eval(&macro_scope).eval(scope)
         }
         Sexpr::List(list) => eval_list(
@@ -128,7 +132,7 @@ fn eval_rest_as_function_declaration(rest: &[Sexpr], scope: &Scope) -> Sexpr {
     let args = parse_as_args(&rest[0]);
     let fn_body = &rest[1];
 
-    // TODO closues ???
+    // TODO closures ???
     // substitute scope into fn_body ???
     // actually should be easy as everything is pure and passed by value
     let _ = scope;
@@ -175,8 +179,6 @@ fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Sexpr {
     }
 }
 
-/// takes a list of nodes of the form (Node::Quote, Node::List(..))
-/// returns a list of the evaulat
 fn eval_rest_as_quote(list: &[Sexpr]) -> Sexpr {
     if list.len() != 1 {
         panic!("quote must be called with one argument");
