@@ -140,7 +140,21 @@ const EMPTY: BuiltIn = BuiltIn {
     },
 };
 
-pub const BUILTINTS: [BuiltIn; 9] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY];
+const INC: BuiltIn = BuiltIn {
+    symbol: "inc",
+    eval: |args| {
+        if args.len() != 1 {
+            panic!("inc must be called with one argument");
+        }
+        match &args[0] {
+            Sexpr::Int(i) => Sexpr::Int(i + 1),
+            // Sexpr::Float(i) => Sexpr::Float(i + 1.0),
+            _ => panic!("inc must be called with an integer"),
+        }
+    },
+};
+
+pub const BUILTINTS: [BuiltIn; 10] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC];
 
 #[cfg(test)]
 mod tests {

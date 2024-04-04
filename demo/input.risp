@@ -1,13 +1,3 @@
 (let
-    (l (list 1 2 3))
-    (fold
-        (lambda (f list)
-            (let
-                (inner (lambda (ilist acc)
-                            (if (empty? ilist)
-                                acc
-                                (inner
-                                    (cdr ilist)
-                                    (f acc (car ilist))))))
-                (inner (cdr list) (car list)))))
-    (fold + l))
+    (switch (macro (a b) (list b a)))
+    (switch 2 inc))
