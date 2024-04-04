@@ -15,7 +15,10 @@ impl BuiltIn {
 
 const LIST: BuiltIn = BuiltIn {
     symbol: "list",
-    eval: |args| Sexpr::List(args.to_vec()),
+    eval: |args| Sexpr::List {
+        quasiquote: false,
+        sexprs: args.to_vec(),
+    },
 };
 
 const CONS: BuiltIn = BuiltIn {
@@ -25,10 +28,16 @@ const CONS: BuiltIn = BuiltIn {
             panic!("cons must be called with two arguments");
         }
         match &args[1] {
-            Sexpr::List(list) => {
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: list,
+            } => {
                 let mut new = list.clone();
                 new.insert(0, args[0].clone());
-                Sexpr::List(new)
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: new,
+                }
             }
             _ => panic!("cons must be called with a list as the second argument"),
         }
@@ -42,7 +51,10 @@ const CAR: BuiltIn = BuiltIn {
             panic!("car must be called with one argument");
         }
         match &args[0] {
-            Sexpr::List(list) => list[0].clone(),
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: list,
+            } => list[0].clone(),
             _ => panic!("car must be called with a list as the first argument"),
         }
     },
@@ -55,10 +67,16 @@ const CDR: BuiltIn = BuiltIn {
             panic!("cdr must be called with one argument, got {}", args.len());
         }
         match &args[0] {
-            Sexpr::List(list) => {
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: list,
+            } => {
                 let mut new = list.clone();
                 new.remove(0);
-                Sexpr::List(new)
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: new,
+                }
             }
             _ => panic!("cdr must be called with a list as the first argument"),
         }
@@ -134,7 +152,10 @@ const EMPTY: BuiltIn = BuiltIn {
             panic!("empty must be called with one argument");
         }
         match &args[0] {
-            Sexpr::List(list) => Sexpr::Bool(list.is_empty()),
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: list,
+            } => Sexpr::Bool(list.is_empty()),
             _ => panic!("empty must be called with a list as the first argument"),
         }
     },
@@ -164,15 +185,17 @@ mod tests {
     fn test_cons() {
         let args = vec![
             Sexpr::Int(1),
-            Sexpr::List(vec![Sexpr::Int(2), Sexpr::Int(3)]),
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: vec![Sexpr::Int(2), Sexpr::Int(3)],
+            },
         ];
         assert_eq!(
             CONS.eval(&args),
-            Sexpr::List(vec![
-                Sexpr::Int(1),
-                Sexpr::Int(2),
-                Sexpr::Int(3),
-            ])
+            Sexpr::List {
+                quasiquote: false,
+                sexprs: vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3),]
+            }
         );
     }
 }

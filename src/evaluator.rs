@@ -32,7 +32,7 @@ impl Scope {
 impl Sexpr {
     fn eval(self, scope: &Scope) -> Sexpr {
         match self {
-            Sexpr::List(list) => eval_list(list, scope),
+            Sexpr::List { sexprs, quasiquote } => eval_list(sexprs, scope, quasiquote),
             Sexpr::Symbol(sym) => scope
                 .bindings
                 .get(&sym)
@@ -43,16 +43,31 @@ impl Sexpr {
     }
 }
 
-fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
-    // println!("evaulating list: \n - {:#?}", list);
-    match &list[0] {
-        // handle special forms:
-        Sexpr::Symbol(symbol) => match symbol.as_str() {
+fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Sexpr {
+    match (&list[0], quasiquote) {
+        (_, true) => {
+            let vals = list
+                .iter()
+                .map(|sexpr| match sexpr {
+                    Sexpr::CommaUnquote(sexpr) => sexpr.clone().eval(scope),
+                    sexpr => sexpr.clone(),
+                })
+                .collect::<Vec<Sexpr>>();
+
+            Sexpr::List {
+                sexprs: vals,
+                quasiquote: false,
+            }
+        }
+        (Sexpr::Symbol(symbol), _) => match symbol.as_str() {
             "lambda" => eval_rest_as_function_declaration(&list[1..], scope),
             "macro" => eval_rest_as_macro_declaration(&list[1..], scope),
             "if" => eval_rest_as_if(&list[1..], scope),
             "let" => eval_rest_as_let(&list[1..], scope),
-            "quote" => eval_rest_as_quote(&list[1..]),
+            "quote" => {
+                assert!(list.len() == 2, "quote must be called with one argument");
+                list[1].clone()
+            }
             _ => {
                 let head = list[0].clone().eval(scope);
 
@@ -61,10 +76,11 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
                         .chain(list[1..].iter().cloned())
                         .collect::<Vec<Sexpr>>(),
                     scope,
+                    false,
                 )
             }
         },
-        Sexpr::Lambda { parameters, body } => {
+        (Sexpr::Lambda { parameters, body }, _) => {
             let arguments = list[1..]
                 .iter()
                 .cloned()
@@ -85,7 +101,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
             let func_scope = scope.with_bindings(&bindings);
             body.clone().eval(&func_scope)
         }
-        Sexpr::Macro { parameters, body } => {
+        (Sexpr::Macro { parameters, body }, _) => {
             // DON'T EVALUATE THE MACRO BODY
             let arguments = &list[1..];
 
@@ -105,21 +121,21 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
 
             // create a new scope with the macro_bindings for inside the macro
             let macro_scope = &scope.with_bindings(&macro_bindings);
-            // println!("evaluating macro {:#?} \nwith scope: {:#?}", body.clone(), macro_scope);
             let expanded = body.clone().eval(macro_scope); // evaluate the macro
-            expanded.eval(scope)
+            expanded.eval(scope) // evaluate the result of the macro in the original scope
         }
-        Sexpr::List(list) => eval_list(
-            iter::once(list[0].clone().eval(scope))
-                .chain(list[1..].iter().cloned())
+        (Sexpr::List { sexprs, quasiquote }, _) => eval_list(
+            iter::once(sexprs[0].clone().eval(scope))
+                .chain(sexprs[1..].iter().cloned())
                 .collect::<Vec<Sexpr>>(),
             scope,
+            *quasiquote, // TODO revise
         ),
-        Sexpr::String(_) => panic!("Cannot call string value"),
-        Sexpr::Bool(_) => panic!("Cannot call boolean value"),
-        Sexpr::Int(_) => panic!("Cannot call int value"),
-        Sexpr::Float(_) => panic!("Cannot call float value"),
-        Sexpr::BuiltIn(builtin) => {
+        (Sexpr::String(_), _) => panic!("Cannot call string value"),
+        (Sexpr::Bool(_), _) => panic!("Cannot call boolean value"),
+        (Sexpr::Int(_), _) => panic!("Cannot call int value"),
+        (Sexpr::Float(_), _) => panic!("Cannot call float value"),
+        (Sexpr::BuiltIn(builtin), _) => {
             let arguments = list[1..]
                 .iter()
                 .cloned()
@@ -127,6 +143,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Sexpr {
                 .collect::<Vec<Sexpr>>();
             builtin.eval(&arguments)
         }
+        (Sexpr::CommaUnquote(_), _) => panic!("Unquote outside of quasiquoted context"),
     }
 }
 
@@ -185,43 +202,53 @@ fn eval_rest_as_quote(list: &[Sexpr]) -> Sexpr {
     if list.len() != 1 {
         panic!("quote must be called with one argument");
     }
-    quote(list[0].clone())
+
+    // quote is a special form that just returns the argument
+    list[0].clone()
 }
 
-fn quote(node: Sexpr) -> Sexpr {
-    match node {
-        Sexpr::List(list) => Sexpr::List(list.iter().map(|node| quote(node.clone())).collect()),
-        Sexpr::Lambda {
-            parameters: _,
-            body: _,
-        } => {
-            panic!("this shouldn't happen (quoting a Lambda value) as the user has no way to input a raw value of this kind")
-        }
-        Sexpr::Macro {
-            parameters: _,
-            body: _,
-        } => {
-            panic!("this shouldn't happen (quoting a Macro value) as the user has no way to input a raw value of this kind")
-        }
-        Sexpr::BuiltIn(_) => {
-            panic!("this shouldn't happen (quoting a BuiltIn value) as the user has no way to input a raw value of this kind")
-        }
-        Sexpr::Symbol(_) | Sexpr::String(_) | Sexpr::Bool(_) | Sexpr::Int(_) | Sexpr::Float(_) => {
-            node
-        }
-    }
-}
+// fn quote(node: Sexpr) -> Sexpr {
+//     match node {
+//         Sexpr::List { sexprs, quasiquote } => Sexpr::List {
+//             sexprs: sexprs.iter().map(|node| quote(node.clone())).collect(),
+//             quasiquote,
+//         },
+//         Sexpr::Lambda {
+//             parameters: _,
+//             body: _,
+//         } => {
+//             panic!("this shouldn't happen (quoting a Lambda value) as the user has no way to input a raw value of this kind")
+//         }
+//         Sexpr::Macro {
+//             parameters: _,
+//             body: _,
+//         } => {
+//             panic!("this shouldn't happen (quoting a Macro value) as the user has no way to input a raw value of this kind")
+//         }
+//         Sexpr::BuiltIn(_) => {
+//             panic!("this shouldn't happen (quoting a BuiltIn value) as the user has no way to input a raw value of this kind")
+//         }
+//         Sexpr::Symbol(_) | Sexpr::String(_) | Sexpr::Bool(_) | Sexpr::Int(_) | Sexpr::Float(_) => {
+//             node
+//         }
+//         Sexpr::CommaUnquote(_) => {
+
+//     }
+// }
 
 fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Vec<(String, Sexpr)> {
     list.iter()
         .cloned()
         .map(|node| match node {
-            Sexpr::List(nodes) => {
-                if nodes.len() != 2 {
+            Sexpr::List { quasiquote, sexprs } => {
+                if quasiquote {
+                    panic!("quasiquote not allowed in let bindings");
+                }
+                if sexprs.len() != 2 {
                     panic!("let binding must be a list of two elements");
                 }
-                if let Sexpr::Symbol(ident) = &nodes[0] {
-                    let val = nodes[1].clone().eval(scope);
+                if let Sexpr::Symbol(ident) = &sexprs[0] {
+                    let val = sexprs[1].clone().eval(scope);
                     (ident.clone(), val.clone())
                 } else {
                     panic!("left side of let binding must be an identifier");
@@ -233,8 +260,12 @@ fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Vec<(String, Sexpr)
 }
 
 fn parse_as_args(expr: &Sexpr) -> Vec<String> {
-    if let Sexpr::List(args) = expr {
-        args.iter()
+    if let Sexpr::List { sexprs, quasiquote } = expr {
+        if *quasiquote {
+            panic!("quasiquote not allowed in function arguments");
+        }
+        sexprs
+            .iter()
             .map(|e| {
                 if let Sexpr::Symbol(ident) = e {
                     ident.clone()
@@ -252,8 +283,9 @@ fn parse_as_args(expr: &Sexpr) -> Vec<String> {
 /// and just evaluate it.
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
-pub fn evaluate(ast: Ast) {
-    println!("{:#?}", ast.root.eval(&Scope::new()));
+pub fn evaluate(ast: Ast) -> Sexpr {
+    println!("{:#?}", ast);
+    ast.root.eval(&Scope::new())
 }
 
 #[cfg(test)]
@@ -263,11 +295,10 @@ mod tests {
     #[test]
     fn test1() {
         let ast = Ast {
-            root: Sexpr::List(vec![
-                Sexpr::Symbol("+".to_string()),
-                Sexpr::Int(1),
-                Sexpr::Int(2),
-            ]),
+            root: Sexpr::List {
+                sexprs: vec![Sexpr::Symbol("+".to_string()), Sexpr::Int(1), Sexpr::Int(2)],
+                quasiquote: false,
+            },
         };
         let output = ast.root.eval(&Scope::new());
         assert_eq!(output, Sexpr::Int(3));
@@ -276,23 +307,28 @@ mod tests {
     #[test]
     fn test2() {
         let ast = Ast {
-            root: Sexpr::List(vec![
-                Sexpr::Symbol("+".to_string()),
-                Sexpr::Int(1),
-                Sexpr::Int(2),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("-".to_string()),
-                    Sexpr::Int(4),
-                    Sexpr::Int(3),
-                ]),
-                Sexpr::Int(5),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("*".to_string()),
+            root: Sexpr::List {
+                quasiquote: false,
+                sexprs: vec![
+                    Sexpr::Symbol("+".to_string()),
                     Sexpr::Int(1),
-                    // Sexpr::Float(2.3),
                     Sexpr::Int(2),
-                ]),
-            ]),
+                    Sexpr::List {
+                        quasiquote: false,
+                        sexprs: vec![Sexpr::Symbol("-".to_string()), Sexpr::Int(4), Sexpr::Int(3)],
+                    },
+                    Sexpr::Int(5),
+                    Sexpr::List {
+                        quasiquote: false,
+                        sexprs: vec![
+                            Sexpr::Symbol("*".to_string()),
+                            Sexpr::Int(1),
+                            // Sexpr::Float(2.3),
+                            Sexpr::Int(2),
+                        ],
+                    },
+                ],
+            },
         };
         let res = ast.root.eval(&Scope::new());
         assert_eq!(res, Sexpr::Int(11))
@@ -301,15 +337,24 @@ mod tests {
     #[test]
     fn test3() {
         let ast = Ast {
-            root: Sexpr::List(vec![
-                Sexpr::Symbol("let".to_string()),
-                Sexpr::List(vec![Sexpr::Symbol("x".to_string()), Sexpr::Int(2)]),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("*".to_string()),
-                    Sexpr::Symbol("x".to_string()),
-                    Sexpr::Int(3),
-                ]),
-            ]),
+            root: Sexpr::List {
+                quasiquote: false,
+                sexprs: vec![
+                    Sexpr::Symbol("let".to_string()),
+                    Sexpr::List {
+                        quasiquote: false,
+                        sexprs: vec![Sexpr::Symbol("x".to_string()), Sexpr::Int(2)],
+                    },
+                    Sexpr::List {
+                        quasiquote: false,
+                        sexprs: vec![
+                            Sexpr::Symbol("*".to_string()),
+                            Sexpr::Symbol("x".to_string()),
+                            Sexpr::Int(3),
+                        ],
+                    },
+                ],
+            },
         };
         let res = ast.root.eval(&Scope::new());
         assert_eq!(res, Sexpr::Int(6))
@@ -322,29 +367,47 @@ mod tests {
          *   (switch (macro (a b) (quote (b a))))
          *   (switch 3 inc))
          */
-        let ast = Sexpr::List(vec![
-            Sexpr::Symbol("let".to_string()),
-            Sexpr::List(vec![
-                Sexpr::Symbol("switch".to_string()),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("macro".to_string()),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("a".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                    ]),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("list".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                        Sexpr::Symbol("a".to_string()),
-                    ]),
-                ]),
-            ]),
-            Sexpr::List(vec![
-                Sexpr::Symbol("switch".to_string()),
-                Sexpr::Int(1),
-                Sexpr::Symbol("inc".to_string()),
-            ]),
-        ]);
+        let ast = Sexpr::List {
+            quasiquote: false,
+            sexprs: vec![
+                Sexpr::Symbol("let".to_string()),
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("switch".to_string()),
+                        Sexpr::List {
+                            quasiquote: false,
+                            sexprs: vec![
+                                Sexpr::Symbol("macro".to_string()),
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("a".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                    ],
+                                },
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("list".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                        Sexpr::Symbol("a".to_string()),
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("switch".to_string()),
+                        Sexpr::Int(1),
+                        Sexpr::Symbol("inc".to_string()),
+                    ],
+                },
+            ],
+        };
         let res = ast.eval(&Scope::new());
         assert_eq!(res, Sexpr::Int(2))
     }
@@ -356,29 +419,47 @@ mod tests {
          *   (switch (macro (a b) (quote (b a))))
          *   (switch 3 inc))
          */
-        let ast = Sexpr::List(vec![
-            Sexpr::Symbol("let".to_string()),
-            Sexpr::List(vec![
-                Sexpr::Symbol("switch".to_string()),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("macro".to_string()),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("a".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                    ]),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("list".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                        Sexpr::Symbol("a".to_string()),
-                    ]),
-                ]),
-            ]),
-            Sexpr::List(vec![
-                Sexpr::Symbol("switch".to_string()),
-                Sexpr::Int(1),
-                Sexpr::Symbol("inc".to_string()),
-            ]),
-        ]);
+        let ast = Sexpr::List {
+            quasiquote: false,
+            sexprs: vec![
+                Sexpr::Symbol("let".to_string()),
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("switch".to_string()),
+                        Sexpr::List {
+                            quasiquote: false,
+                            sexprs: vec![
+                                Sexpr::Symbol("macro".to_string()),
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("a".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                    ],
+                                },
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("list".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                        Sexpr::Symbol("a".to_string()),
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("switch".to_string()),
+                        Sexpr::Int(1),
+                        Sexpr::Symbol("inc".to_string()),
+                    ],
+                },
+            ],
+        };
         let res = ast.eval(&Scope::new());
         assert_eq!(res, Sexpr::Int(2))
     }
@@ -390,32 +471,50 @@ mod tests {
          *   (infix (macro (a op b) (list op a b)))
          *   (infix 1 + 2))
          */
-        let ast = Sexpr::List(vec![
-            Sexpr::Symbol("let".to_string()),
-            Sexpr::List(vec![
-                Sexpr::Symbol("infix".to_string()),
-                Sexpr::List(vec![
-                    Sexpr::Symbol("macro".to_string()),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("a".to_string()),
-                        Sexpr::Symbol("op".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                    ]),
-                    Sexpr::List(vec![
-                        Sexpr::Symbol("list".to_string()),
-                        Sexpr::Symbol("op".to_string()),
-                        Sexpr::Symbol("a".to_string()),
-                        Sexpr::Symbol("b".to_string()),
-                    ]),
-                ]),
-            ]),
-            Sexpr::List(vec![
-                Sexpr::Symbol("infix".to_string()),
-                Sexpr::Int(1),
-                Sexpr::Symbol("+".to_string()),
-                Sexpr::Int(2),
-            ]),
-        ]);
+        let ast = Sexpr::List {
+            quasiquote: false,
+            sexprs: vec![
+                Sexpr::Symbol("let".to_string()),
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("infix".to_string()),
+                        Sexpr::List {
+                            quasiquote: false,
+                            sexprs: vec![
+                                Sexpr::Symbol("macro".to_string()),
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("a".to_string()),
+                                        Sexpr::Symbol("op".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                    ],
+                                },
+                                Sexpr::List {
+                                    quasiquote: false,
+                                    sexprs: vec![
+                                        Sexpr::Symbol("list".to_string()),
+                                        Sexpr::Symbol("op".to_string()),
+                                        Sexpr::Symbol("a".to_string()),
+                                        Sexpr::Symbol("b".to_string()),
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![
+                        Sexpr::Symbol("infix".to_string()),
+                        Sexpr::Int(1),
+                        Sexpr::Symbol("+".to_string()),
+                        Sexpr::Int(2),
+                    ],
+                },
+            ],
+        };
         assert_eq!(ast.eval(&Scope::new()), Sexpr::Int(3))
     }
 }

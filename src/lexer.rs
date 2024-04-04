@@ -23,6 +23,7 @@ pub enum Token {
     Literal(Literal),
     Symbol(String),
     Comma,
+    Backtick,
 }
 
 impl Token {
@@ -47,22 +48,13 @@ impl Token {
             )
         }))
     }
-
-    fn from_char(c: char) -> Token {
-        match c {
-            '(' => Token::Parenthesis(LR::Left),
-            ')' => Token::Parenthesis(LR::Right),
-            ',' => Token::Comma,
-            c => Token::Symbol(c.to_string()),
-        }
-    }
 }
 
 enum LexerState {
     None, // single char tokens
     NumberLiteral(String),
     StringLiteral(String), // no escaping, could do by `StringLiteral(Escaped)`
-    Symbol(String), // could resolve to a keyword, identifier, or boolean
+    Symbol(String),        // could resolve to a keyword, identifier, or boolean
 }
 
 fn remove_comments(s: String) -> String {
@@ -88,24 +80,25 @@ pub fn lex(s: &String) -> Vec<Token> {
 
         match state {
             LexerState::Symbol(ref mut s) => {
-                if c != ' ' && c != '(' && c != ')' && c != ','{
+                if c == ' ' || c == '(' || c == ')' || c == ',' || c == '`' {
+                    tokens.push(Token::from_string(s));
+                    state = LexerState::None;
+                    // important to not increment i here, we want to lex the current char
+                } else {
                     s.push(c);
                     i += 1;
-                } else {
-                    tokens.push(Token::from_string(s));
-                    state = LexerState::None
                 }
             }
             LexerState::NumberLiteral(ref mut s) => {
                 if c.is_numeric() || c == '.' {
                     s.push(c);
                     i += 1;
-                } else {
-                    if c != ' ' && c != '(' && c != ')' && c != ',' {
-                        panic!("Unexpected character in number literal: `{}`", c);
-                    }
+                } else if c == ' ' || c == '(' || c == ')' || c == ',' || c == '`' {
                     tokens.push(Token::from_numeric(s));
                     state = LexerState::None;
+                    // important to not increment i here, we want to lex the current char
+                } else {
+                    panic!("Unexpected character in number literal: [{}]", c);
                 }
             }
             LexerState::StringLiteral(ref mut s) => {
@@ -120,16 +113,17 @@ pub fn lex(s: &String) -> Vec<Token> {
             }
             LexerState::None => {
                 match c {
-                    '(' | ')' | ',' | '+' | '-' | '*' | '/' => {
-                        tokens.push(Token::from_char(c));
-                    }
+                    ' ' => {}
                     '"' => {
                         state = LexerState::StringLiteral(String::new());
                     }
                     c if c.is_numeric() => {
                         state = LexerState::NumberLiteral(c.to_string());
                     }
-                    ' ' => {}
+                    '(' => tokens.push(Token::Parenthesis(LR::Left)),
+                    ')' => tokens.push(Token::Parenthesis(LR::Right)),
+                    ',' => tokens.push(Token::Comma),
+                    '`' => tokens.push(Token::Backtick),
                     c => {
                         state = LexerState::Symbol(c.to_string());
                     }
@@ -188,9 +182,23 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unexpected character: `#`")]
     fn test_unexpected_character() {
         let input = "#".to_string();
-        lex(&input);
+        let expected = vec![Token::Symbol("#".to_string())];
+        assert_eq!(lex(&input), expected);
+    }
+
+    #[test]
+    fn test_unquote() {
+        let input = "(,a ,b)".to_string();
+        let expected = vec![
+            Token::Parenthesis(LR::Left),
+            Token::Comma,
+            Token::Symbol("a".to_string()),
+            Token::Comma,
+            Token::Symbol("b".to_string()),
+            Token::Parenthesis(LR::Right),
+        ];
+        assert_eq!(lex(&input), expected);
     }
 }
