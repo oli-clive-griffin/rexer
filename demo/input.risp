@@ -1,6 +1,14 @@
-(let
-    (switch (macro (a b) `(,b ,a)))
-    (switch2 (macro (a b) (list b a)))
-    (list
-        (switch 2 inc)
-        (switch2 2 inc)))
+(fn (add a b) (+ a b))
+
+(print (add 1 2))
+
+(print 1)
+
+;(let
+;    ()
+;    (switch (macro (a b) `(,b ,a)))
+;    (switch2 (macro (a b) (list b a)))
+;    (list
+;        (switch 2 inc)
+;        (switch2 2 inc)))
+

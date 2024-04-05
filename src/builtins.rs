@@ -175,7 +175,18 @@ const INC: BuiltIn = BuiltIn {
     },
 };
 
-pub const BUILTINTS: [BuiltIn; 10] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC];
+
+const PRINT: BuiltIn = BuiltIn {
+    symbol: "print",
+    eval: |args| {
+        for arg in args {
+            println!("{:?}", arg);
+        }
+        Sexpr::Bool(true) // TODO introduce a new type for void / unit
+    },
+};
+
+pub const BUILTINTS: [BuiltIn; 11] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT];
 
 #[cfg(test)]
 mod tests {

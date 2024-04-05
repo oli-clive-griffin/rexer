@@ -16,5 +16,5 @@ fn main() {
 
     let tokens = lexer::lex(&contents);
     let ast = parser::parse(tokens);
-    println!("{:?}", evaluator::evaluate(ast));
+    evaluator::evaluate(ast);
 }

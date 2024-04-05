@@ -6,7 +6,7 @@ use crate::{
 
 #[derive(Debug, PartialEq)]
 pub struct Ast {
-    pub root: Sexpr,
+    pub expressions: Vec<Sexpr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -21,9 +21,9 @@ pub enum Sexpr {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Lambda {
+    Function {
         parameters: Vec<String>,
-        body: Box<Sexpr>,
+        body: Box<Vec<Sexpr>>,
     },
     Macro {
         parameters: Vec<String>,
@@ -107,9 +107,21 @@ fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
 }
 
 pub fn parse(tokens: Vec<Token>) -> Ast {
-    let (s_expr, i_diff) = parse_sexpr(&tokens[..]);
-    assert!(i_diff == tokens.len()); // for now, expect to parse all tokens from a single s_expr
-    Ast { root: s_expr }
+    let mut expressions = vec![];
+    let mut i = 0;
+    let mut rest = &tokens[i..];
+    loop {
+        let (s_expr, i_diff) = parse_sexpr(rest);
+        expressions.push(s_expr);
+        i += i_diff;
+        rest = &tokens[i..];
+        if i == tokens.len() {
+            break;
+        }
+        assert!(i < tokens.len()); // for now, expect to parse all tokens from a single s_expr
+    }
+    let ast = Ast { expressions };
+    ast
 }
 
 #[cfg(test)]
@@ -122,16 +134,16 @@ mod tests {
     fn test1() {
         let input = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
 
-        assert_eq!(parse(input).root, Sexpr::Int(123));
+        assert_eq!(parse(input).expressions, vec![Sexpr::Int(123)]);
     }
 
     #[test]
     fn test2() {
-        let Ast { root } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
+        let Ast { expressions } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
 
         assert_eq!(
-            root,
-            Sexpr::List {
+            expressions,
+            vec![Sexpr::List {
                 quasiquote: false,
                 sexprs: vec![
                     Sexpr::Symbol("+".to_string()),
@@ -141,16 +153,16 @@ mod tests {
                         sexprs: vec![Sexpr::Symbol("-".to_string()), Sexpr::Int(4), Sexpr::Int(3)]
                     }
                 ]
-            }
+            }]
         );
     }
 
     #[test]
     fn test_quasiquote() {
-        let Ast { root } = parse(lex(&"(+ 1 `(- 4 3))".to_string()));
+        let Ast { expressions } = parse(lex(&"(+ 1 `(- 4 3))".to_string()));
         assert_eq!(
-            root,
-            Sexpr::List {
+            expressions,
+            vec![Sexpr::List {
                 quasiquote: false,
                 sexprs: vec![
                     Sexpr::Symbol("+".to_string()),
@@ -160,16 +172,16 @@ mod tests {
                         sexprs: vec![Sexpr::Symbol("-".to_string()), Sexpr::Int(4), Sexpr::Int(3)]
                     }
                 ]
-            }
+            }]
         );
     }
 
     #[test]
     fn test_comma_unquote() {
-        let Ast { root } = parse(lex(&"(+ 1 ,(- 4 3))".to_string()));
+        let Ast { expressions } = parse(lex(&"(+ 1 ,(- 4 3))".to_string()));
         assert_eq!(
-            root,
-            Sexpr::List {
+            expressions,
+            vec![Sexpr::List {
                 quasiquote: false,
                 sexprs: vec![
                     Sexpr::Symbol("+".to_string()),
@@ -179,22 +191,22 @@ mod tests {
                         sexprs: vec![Sexpr::Symbol("-".to_string()), Sexpr::Int(4), Sexpr::Int(3)]
                     }))
                 ]
-            }
+            }]
         );
     }
 
     #[test]
     fn test_comma_unquote_2() {
-        let Ast { root } = parse(lex(&"(,a ,b)".to_string()));
+        let Ast { expressions } = parse(lex(&"(,a ,b)".to_string()));
         assert_eq!(
-            root,
-            Sexpr::List {
+            expressions,
+            vec![Sexpr::List {
                 quasiquote: false,
                 sexprs: vec![
                     Sexpr::CommaUnquote(Box::new(Sexpr::Symbol("a".to_string()))),
                     Sexpr::CommaUnquote(Box::new(Sexpr::Symbol("b".to_string()))),
                 ]
-            }
+            }]
         );
     }
 }
