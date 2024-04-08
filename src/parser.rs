@@ -23,7 +23,7 @@ pub enum Sexpr {
     Float(f64),
     Function {
         parameters: Vec<String>,
-        body: Box<Vec<Sexpr>>,
+        body: Vec<Sexpr>,
     },
     Macro {
         parameters: Vec<String>,

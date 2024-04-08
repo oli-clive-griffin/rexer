@@ -39,7 +39,7 @@ const CONS: BuiltIn = BuiltIn {
                     sexprs: new,
                 })
             }
-            a => return Err(format!("cons must be called with a list as the second argument, got {:#?}", a)),
+            a => Err(format!("cons must be called with a list as the second argument, got {:#?}", a)),
         }
     },
 };
@@ -55,7 +55,7 @@ const CAR: BuiltIn = BuiltIn {
                 quasiquote: false,
                 sexprs: list,
             } => Ok(list[0].clone()),
-            _ => return Err("car must be called with a list as the first argument".to_string()),
+            _ => Err("car must be called with a list as the first argument".to_string()),
         }
     },
 };
@@ -94,7 +94,7 @@ const ADD: BuiltIn = BuiltIn {
                 _ => return Err("add must be called with a list of integers".to_string()),
             }
         }
-        return Ok(Sexpr::Int(out));
+        Ok(Sexpr::Int(out))
     },
 };
 
@@ -106,8 +106,8 @@ const SUB: BuiltIn = BuiltIn {
             // Sexpr::Float(i) => i as f64,
             _ => return Err("sub must be called with a list of integers".to_string()),
         };
-        for i in 1..args.len() {
-            match args[i] {
+        for arg in &args[1..] {
+            match arg {
                 Sexpr::Int(j) => init -= j,
                 // Sexpr::Float(j) => init -= j as f64,
                 _ => return Err("sub must be called with a list of integers".to_string()),
@@ -140,8 +140,8 @@ const DIV: BuiltIn = BuiltIn {
             // Sexpr::Float(i) => i as f64,
             _ => return Err("div must be called with a list of integers".to_string()),
         };
-        for i in 1..args.len() {
-            match args[i] {
+        for arg in &args[1..] {
+            match arg {
                 Sexpr::Int(j) => init /= j,
                 // Sexpr::Float(j) => init /= j as f64,
                 _ => return Err("div must be called with a list of integers".to_string()),

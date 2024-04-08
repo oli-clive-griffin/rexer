@@ -61,7 +61,6 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
                     Sexpr::CommaUnquote(sexpr) => sexpr.clone().eval(scope).map(|r| r.0),
                     sexpr => Ok(sexpr.clone()),
                 })
-                .into_iter()
                 .collect::<Result<Vec<Sexpr>, String>>()?;
 
             Ok((
@@ -114,7 +113,6 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
                 .iter()
                 .cloned()
                 .map(|arg| arg.eval(scope).map(|r| r.0))
-                .into_iter()
                 .collect::<Result<Vec<Sexpr>, String>>()?;
 
             if parameters.len() != arguments.len() {
@@ -200,13 +198,13 @@ fn eval_rest_as_function_declaration(
 
                 let function = Sexpr::Function {
                     parameters: arg_names,
-                    body: Box::new(rest[1..].to_vec()),
+                    body: rest[1..].to_vec(),
                 };
 
                 let new_scope = scope.with_bindings(&[(func_name.clone(), function.clone())]);
-                return Ok((function, new_scope.clone()));
+                Ok((function, new_scope.clone()))
             } else {
-                return Err("Function declaration must start with a symbol".to_string());
+                Err("Function declaration must start with a symbol".to_string())
             }
         }
         _ => Err("Function declaration must have a list of arguments".to_string()),
@@ -225,7 +223,7 @@ fn eval_rest_as_lambda(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), 
     Ok((
         Sexpr::Function {
             parameters: args,
-            body: Box::new(fn_body),
+            body: fn_body,
         },
         scope.clone(),
     ))
@@ -266,7 +264,7 @@ fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), Stri
     if let Sexpr::Bool(cond) = condition.eval(scope)?.0 {
         (if cond { if_body } else { else_body }).eval(scope)
     } else {
-        return Err("If condition must be a boolean".to_string());
+        Err("If condition must be a boolean".to_string())
     }
 }
 
@@ -290,7 +288,6 @@ fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Result<Vec<(String,
             }
             _ => Err("All bindings must be lists".to_string()),
         })
-        .into_iter()
         .collect::<Result<Vec<(String, Sexpr)>, String>>()
 }
 
