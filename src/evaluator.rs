@@ -58,7 +58,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
             let vals = list
                 .iter()
                 .map(|sexpr| match sexpr {
-                    Sexpr::CommaUnquote(sexpr) => Ok(sexpr.clone().eval(scope)?.0),
+                    Sexpr::CommaUnquote(sexpr) => sexpr.clone().eval(scope).map(|r| r.0),
                     sexpr => Ok(sexpr.clone()),
                 })
                 .into_iter()
@@ -92,8 +92,10 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
                 }
             }
             "quote" => {
-                assert!(list.len() == 2, "quote must be called with one argument");
-                Ok((list[1].clone(), scope.clone()))
+                match list.len() {
+                    2 => Ok((list[1].clone(), scope.clone())),
+                    _ => Err("quote must be called with one argument".to_string()),
+                }
             }
             _ => {
                 let head = list[0].clone().eval(scope)?.0;
@@ -111,7 +113,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
             let arguments = list[1..]
                 .iter()
                 .cloned()
-                .map(|arg| Ok(arg.eval(scope)?.0))
+                .map(|arg| arg.eval(scope).map(|r| r.0))
                 .into_iter()
                 .collect::<Result<Vec<Sexpr>, String>>()?;
 
@@ -168,9 +170,9 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
             let arguments = list[1..]
                 .iter()
                 .cloned()
-                .map(|arg| Ok(arg.eval(scope)?.0))
+                .map(|arg| arg.eval(scope).map(|r| r.0))
                 .collect::<Result<Vec<Sexpr>, String>>()?;
-            Ok((builtin.eval(&arguments), scope.clone()))
+            Ok((builtin.eval(&arguments)?, scope.clone()))
         }
         (Sexpr::CommaUnquote(_), _) => Err("Unquote outside of quasiquoted context".to_string()),
     }
@@ -247,7 +249,7 @@ fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Result<(Sexp
 
 fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
     let binding_exprs = rest[..rest.len() - 1].to_vec();
-    let expr = rest.last().expect("let must have a body");
+    let expr = rest.last().ok_or("let must have at least one argument".to_string())?;
     let bindings = generate_let_bindings(binding_exprs, scope)?;
     expr.clone().eval(&scope.with_bindings(&bindings))
 }
@@ -328,7 +330,7 @@ fn sequential_eval(list: Vec<Sexpr>, scope: &Scope) -> Result<(Sexpr, Scope), St
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
 pub fn evaluate(ast: Ast) -> Result<Sexpr, String> {
-    Ok(sequential_eval(ast.expressions, &Scope::new())?.0)
+    sequential_eval(ast.expressions, &Scope::new()).map(|r| r.0)
 }
 
 impl Display for Sexpr {
@@ -392,17 +394,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test1() {
+    fn test1() -> Result<(), String> {
         let expr = Sexpr::List {
             sexprs: vec![Sexpr::Symbol("+".to_string()), Sexpr::Int(1), Sexpr::Int(2)],
             quasiquote: false,
         };
-        let output = expr.eval(&Scope::new()).unwrap().0;
+        let output = expr.eval(&Scope::new())?.0;
         assert_eq!(output, Sexpr::Int(3));
+        Ok(())
     }
 
     #[test]
-    fn test2() {
+    fn test2() -> Result<(), String> {
         let sexpr = Sexpr::List {
             quasiquote: false,
             sexprs: vec![
@@ -425,12 +428,13 @@ mod tests {
                 },
             ],
         };
-        let res = sexpr.eval(&Scope::new()).unwrap().0;
-        assert_eq!(res, Sexpr::Int(11))
+        let res = sexpr.eval(&Scope::new())?.0;
+        assert_eq!(res, Sexpr::Int(11));
+        Ok(())
     }
 
     #[test]
-    fn test3() {
+    fn test3() -> Result<(), String> {
         let sexpr = Sexpr::List {
             quasiquote: false,
             sexprs: vec![
@@ -449,12 +453,13 @@ mod tests {
                 },
             ],
         };
-        let res = sexpr.eval(&Scope::new()).unwrap().0;
-        assert_eq!(res, Sexpr::Int(6))
+        let res = sexpr.eval(&Scope::new())?.0;
+        assert_eq!(res, Sexpr::Int(6));
+        Ok(())
     }
 
     #[test]
-    fn test_macros_1() {
+    fn test_macros_1() -> Result<(), String> {
         /*
          * (let
          *   (switch (macro (a b) (quote (b a))))
@@ -501,12 +506,13 @@ mod tests {
                 },
             ],
         };
-        let res = ast.eval(&Scope::new()).unwrap().0;
-        assert_eq!(res, Sexpr::Int(2))
+        let res = ast.eval(&Scope::new())?.0;
+        assert_eq!(res, Sexpr::Int(2));
+        Ok(())
     }
 
     #[test]
-    fn test_macros_2() {
+    fn test_macros_2() -> Result<(), String> {
         /*
          * (let
          *   (switch (macro (a b) (quote (b a))))
@@ -553,12 +559,13 @@ mod tests {
                 },
             ],
         };
-        let res = ast.eval(&Scope::new()).unwrap().0;
-        assert_eq!(res, Sexpr::Int(2))
+        let res = ast.eval(&Scope::new())?.0;
+        assert_eq!(res, Sexpr::Int(2));
+        Ok(())
     }
 
     #[test]
-    fn test_macros_3() {
+    fn test_macros_3() -> Result<(), String> {
         /*
          * (let
          *   (infix (macro (a op b) (list op a b)))
@@ -608,6 +615,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(ast.eval(&Scope::new()).unwrap().0, Sexpr::Int(3))
+        assert_eq!(ast.eval(&Scope::new())?.0, Sexpr::Int(3));
+        Ok(())
     }
 }

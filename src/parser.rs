@@ -33,7 +33,7 @@ pub enum Sexpr {
     CommaUnquote(Box<Sexpr>),
 }
 
-fn parse_list(rest_tokens: &[Token]) -> (Vec<Sexpr>, usize) {
+fn parse_list(rest_tokens: &[Token]) -> Result<(Vec<Sexpr>, usize), String> {
     let mut list = vec![];
 
     let mut i = 0;
@@ -43,30 +43,30 @@ fn parse_list(rest_tokens: &[Token]) -> (Vec<Sexpr>, usize) {
             break;
         }
         if rest_tokens[i] == Token::Comma {
-            let (s_expr, i_diff) = parse_sexpr(&rest_tokens[(i + 1)..]);
+            let (s_expr, i_diff) = parse_sexpr(&rest_tokens[(i + 1)..])?;
             list.push(Sexpr::CommaUnquote(Box::new(s_expr)));
             i += i_diff + 1;
         } else {
-            let (s_expr, i_diff) = parse_sexpr(&rest_tokens[i..]);
+            let (s_expr, i_diff) = parse_sexpr(&rest_tokens[i..])?;
             list.push(s_expr);
             i += i_diff;
         }
     }
 
-    (list, i)
+    Ok((list, i))
 }
 
-pub fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
+pub fn parse_sexpr(rest_tokens: &[Token]) -> Result<(Sexpr, usize), String> {
     let first = &rest_tokens[0];
 
     match first {
         Token::Parenthesis(LR::Left) => {
-            let (sexprs, i_diff) = parse_list(&rest_tokens[1..]);
+            let (sexprs, i_diff) = parse_list(&rest_tokens[1..])?;
             let list = Sexpr::List {
                 sexprs,
                 quasiquote: false,
             };
-            (list, i_diff + 1)
+            Ok((list, i_diff + 1))
         }
         Token::Literal(lit) => {
             let sexpr = match lit {
@@ -77,41 +77,41 @@ pub fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
                 Literal::String(s) => Sexpr::String(s.clone()),
                 Literal::Boolean(b) => Sexpr::Bool(*b),
             };
-            (sexpr, 1)
+            Ok((sexpr, 1))
         }
-        Token::Symbol(sym) => (Sexpr::Symbol(sym.clone()), 1),
+        Token::Symbol(sym) => Ok((Sexpr::Symbol(sym.clone()), 1)),
         // These should not happen because they are handled in parse_list
         // could this be handled better by tightening up the types?
         // basically it's the responsibility of parse_list to handle these
         // by skipping them and returning the correct index skipper
         Token::Comma | Token::Parenthesis(LR::Right) => {
-            panic!("Unexpected token: {:?}", first);
+            Err(format!("Unexpected token: {:?}", first))
         }
         Token::Backtick => {
             let next_token = &rest_tokens[1];
             if let Token::Parenthesis(LR::Left) = next_token {
-                let (sexprs, i_diff) = parse_list(&rest_tokens[2..]);
+                let (sexprs, i_diff) = parse_list(&rest_tokens[2..])?;
                 let list = Sexpr::List {
                     sexprs,
                     quasiquote: true,
                 };
-                (list, i_diff + 2)
+                Ok((list, i_diff + 2))
             } else {
-                panic!(
+                Err(format!(
                     "Unexpected token after backtick: '{:?}', expected '('",
                     next_token
-                );
+                ))
             }
         }
     }
 }
 
-pub fn parse(tokens: Vec<Token>) -> Ast {
+pub fn parse(tokens: Vec<Token>) -> Result<Ast, String> {
     let mut expressions = vec![];
     let mut i = 0;
     let mut rest = &tokens[i..];
     loop {
-        let (s_expr, i_diff) = parse_sexpr(rest);
+        let (s_expr, i_diff) = parse_sexpr(rest)?;
         expressions.push(s_expr);
         i += i_diff;
         rest = &tokens[i..];
@@ -121,7 +121,7 @@ pub fn parse(tokens: Vec<Token>) -> Ast {
         assert!(i < tokens.len()); // for now, expect to parse all tokens from a single s_expr
     }
     let ast = Ast { expressions };
-    ast
+    Ok(ast)
 }
 
 #[cfg(test)]
@@ -131,15 +131,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test1() {
+    fn test1() -> Result<(), String> {
         let input = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
 
-        assert_eq!(parse(input).expressions, vec![Sexpr::Int(123)]);
+        assert_eq!(parse(input)?.expressions, vec![Sexpr::Int(123)]);
+        Ok(())
     }
 
     #[test]
-    fn test2() {
-        let Ast { expressions } = parse(lex(&"(+ 1 (- 4 3))".to_string()));
+    fn test2() -> Result<(), String> {
+        let Ast { expressions } = parse(lex(&"(+ 1 (- 4 3))".to_string())?)?;
 
         assert_eq!(
             expressions,
@@ -155,11 +156,12 @@ mod tests {
                 ]
             }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_quasiquote() {
-        let Ast { expressions } = parse(lex(&"(+ 1 `(- 4 3))".to_string()));
+    fn test_quasiquote() -> Result<(), String> {
+        let Ast { expressions } = parse(lex(&"(+ 1 `(- 4 3))".to_string())?)?;
         assert_eq!(
             expressions,
             vec![Sexpr::List {
@@ -174,11 +176,12 @@ mod tests {
                 ]
             }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_comma_unquote() {
-        let Ast { expressions } = parse(lex(&"(+ 1 ,(- 4 3))".to_string()));
+    fn test_comma_unquote() -> Result<(), String> {
+        let Ast { expressions } = parse(lex(&"(+ 1 ,(- 4 3))".to_string())?)?;
         assert_eq!(
             expressions,
             vec![Sexpr::List {
@@ -193,11 +196,12 @@ mod tests {
                 ]
             }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_comma_unquote_2() {
-        let Ast { expressions } = parse(lex(&"(,a ,b)".to_string()));
+    fn test_comma_unquote_2() -> Result<(), String> {
+        let Ast { expressions } = parse(lex(&"(,a ,b)".to_string())?)?;
         assert_eq!(
             expressions,
             vec![Sexpr::List {
@@ -208,5 +212,6 @@ mod tests {
                 ]
             }]
         );
+        Ok(())
     }
 }

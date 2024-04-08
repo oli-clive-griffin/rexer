@@ -1,3 +1,5 @@
+use std::string::ParseError;
+
 #[derive(Debug, PartialEq)]
 pub enum LR {
     Left,
@@ -35,18 +37,12 @@ impl Token {
         }
     }
 
-    fn from_numeric(s: &str) -> Token {
-        Token::Literal(Literal::Numeric(if s.contains('.') {
-            NumericLiteral::Float(
-                s.parse::<f64>()
-                    .expect("Could not parse numeric literal as float"),
-            )
+    fn from_numeric(s: &str) -> Result<Token, String> {
+        Ok(Token::Literal(Literal::Numeric(if s.contains('.') {
+            NumericLiteral::Float(s.parse::<f64>().map_err(|e| e.to_string())?)
         } else {
-            NumericLiteral::Int(
-                s.parse::<i64>()
-                    .expect("Could not parse numeric literal as int"),
-            )
-        }))
+            NumericLiteral::Int(s.parse::<i64>().map_err(|e| e.to_string())?)
+        })))
     }
 }
 
@@ -65,7 +61,7 @@ fn remove_comments(s: String) -> String {
         .concat()
 }
 
-pub fn lex(s: &String) -> Vec<Token> {
+pub fn lex(s: &String) -> Result<Vec<Token>, String> {
     let chars = remove_comments(s.to_string())
         .trim()
         .chars()
@@ -94,11 +90,11 @@ pub fn lex(s: &String) -> Vec<Token> {
                     s.push(c);
                     i += 1;
                 } else if c == ' ' || c == '(' || c == ')' || c == ',' || c == '`' {
-                    tokens.push(Token::from_numeric(s));
+                    tokens.push(Token::from_numeric(s)?);
                     state = LexerState::None;
                     // important to not increment i here, we want to lex the current char
                 } else {
-                    panic!("Unexpected character in number literal: [{}]", c);
+                    return Err(format!("Unexpected character in number literal: [{}]", c).to_string());
                 }
             }
             LexerState::StringLiteral(ref mut s) => {
@@ -135,12 +131,12 @@ pub fn lex(s: &String) -> Vec<Token> {
 
     match state {
         LexerState::Symbol(s) => tokens.push(Token::from_string(&s)),
-        LexerState::NumberLiteral(s) => tokens.push(Token::from_numeric(&s)),
-        LexerState::StringLiteral(_) => panic!("Unexpected end of input"),
+        LexerState::NumberLiteral(s) => tokens.push(Token::from_numeric(&s)?),
+        LexerState::StringLiteral(_) => return Err("Unexpected end of input".to_string()),
         LexerState::None => (),
     }
 
-    tokens
+    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -148,28 +144,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_number_literal() {
+    fn test_number_literal() -> Result<(), String> {
         let input = "123".to_string();
         let expected = vec![Token::Literal(Literal::Numeric(NumericLiteral::Int(123)))];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn test_string_literal() {
+    fn test_string_literal() -> Result<(), String> {
         let input = "\"hello\"".to_string();
         let expected = vec![Token::Literal(Literal::String("hello".to_string()))];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn test_identifier() {
+    fn test_identifier() -> Result<(), String> {
         let input = "variableName".to_string();
         let expected = vec![Token::Symbol("variableName".to_string())];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn test_mixed_input() {
+    fn test_mixed_input() -> Result<(), String> {
         let input = "(define x 10)".to_string();
         let expected = vec![
             Token::Parenthesis(LR::Left),
@@ -178,18 +177,20 @@ mod tests {
             Token::Literal(Literal::Numeric(NumericLiteral::Int(10))),
             Token::Parenthesis(LR::Right),
         ];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn test_unexpected_character() {
+    fn test_unexpected_character() -> Result<(), String> {
         let input = "#".to_string();
         let expected = vec![Token::Symbol("#".to_string())];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn test_unquote() {
+    fn test_unquote() -> Result<(), String> {
         let input = "(,a ,b)".to_string();
         let expected = vec![
             Token::Parenthesis(LR::Left),
@@ -199,6 +200,7 @@ mod tests {
             Token::Symbol("b".to_string()),
             Token::Parenthesis(LR::Right),
         ];
-        assert_eq!(lex(&input), expected);
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
     }
 }
