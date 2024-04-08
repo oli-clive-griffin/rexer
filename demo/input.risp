@@ -1,14 +1,22 @@
 (fn (add a b) (+ a b))
 
-(print (add 1 2))
+(fn (fib n)
+    (fn (inner a b i)
+        (if (= i n)
+        b 
+        (inner b (+ a b) (+ 1 i))))
+    (inner 1 1 0))
 
-(print 1)
+(fn (map f l)
+    (if (empty? l)
+        l
+        (cons (f (car l)) (map f (cdr l)))))
 
-;(let
-;    ()
-;    (switch (macro (a b) `(,b ,a)))
-;    (switch2 (macro (a b) (list b a)))
-;    (list
-;        (switch 2 inc)
-;        (switch2 2 inc)))
+(fn (range top)
+    (fn (inner arr i)
+        (if (< i 0)
+            arr
+            (inner (cons i arr) (- i 1))))
+    (inner `() (- top 1)))
 
+(print (map fib (range 10)))

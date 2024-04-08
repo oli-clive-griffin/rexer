@@ -56,7 +56,7 @@ fn parse_list(rest_tokens: &[Token]) -> (Vec<Sexpr>, usize) {
     (list, i)
 }
 
-fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
+pub fn parse_sexpr(rest_tokens: &[Token]) -> (Sexpr, usize) {
     let first = &rest_tokens[0];
 
     match first {

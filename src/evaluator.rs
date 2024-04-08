@@ -1,5 +1,5 @@
-use core::panic;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::iter;
 
 use crate::builtins::BUILTINTS;
@@ -30,40 +30,47 @@ impl Scope {
 }
 
 impl Sexpr {
-    fn eval(self, scope: &Scope) -> (Sexpr, Scope) {
+    fn eval(self, scope: &Scope) -> Result<(Sexpr, Scope), String> {
         match self {
             Sexpr::List { sexprs, quasiquote } => eval_list(sexprs, scope, quasiquote),
-            Sexpr::Symbol(sym) => (
-                scope
-                    .bindings
-                    .get(&sym)
-                    .unwrap_or_else(|| panic!("Symbol \"{}\" not found in scope: {:#?}", sym, scope))
-                    .clone(),
-                scope.clone(),
-            ),
-            _ => (self, scope.clone()),
+            Sexpr::Symbol(sym) => match scope.bindings.get(&sym) {
+                Some(sexpr) => Ok((sexpr.clone(), scope.clone())),
+                None => Err(format!("Symbol {} not found in scope", sym)),
+            },
+            _ => Ok((self, scope.clone())),
         }
     }
 }
 
-fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> (Sexpr, Scope) {
+fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr, Scope), String> {
+    if list.is_empty() {
+        return Ok((
+            Sexpr::List {
+                sexprs: vec![],
+                quasiquote: false,
+            },
+            scope.clone(),
+        ));
+    }
+
     match (&list[0], quasiquote) {
         (_, true) => {
             let vals = list
                 .iter()
                 .map(|sexpr| match sexpr {
-                    Sexpr::CommaUnquote(sexpr) => sexpr.clone().eval(scope).0, // TODO this feels wrong
-                    sexpr => sexpr.clone(),
+                    Sexpr::CommaUnquote(sexpr) => Ok(sexpr.clone().eval(scope)?.0),
+                    sexpr => Ok(sexpr.clone()),
                 })
-                .collect::<Vec<Sexpr>>();
+                .into_iter()
+                .collect::<Result<Vec<Sexpr>, String>>()?;
 
-            (
+            Ok((
                 Sexpr::List {
                     sexprs: vals,
                     quasiquote: false,
                 },
                 scope.clone(),
-            )
+            ))
         }
         (Sexpr::Symbol(symbol), _) => match symbol.as_str() {
             "lambda" => eval_rest_as_lambda(&list[1..], scope),
@@ -71,21 +78,25 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> (Sexpr, Scope
             "if" => eval_rest_as_if(&list[1..], scope),
             "let" => eval_rest_as_let(&list[1..], scope),
             "fn" => {
-                let (result, scope) = eval_rest_as_function_declaration(&list[1..], scope);
-                if let Sexpr::Function { parameters: _, body: _ } = &result {
+                let (result, scope) = eval_rest_as_function_declaration(&list[1..], scope)?;
+                if let Sexpr::Function {
+                    parameters: _,
+                    body: _,
+                } = &result
+                {
                     let new_scope = scope.with_bindings(&[(symbol.clone(), result.clone())]);
 
-                    (result, new_scope)
+                    Ok((result, new_scope))
                 } else {
-                    panic!("fn must return a lambda")
+                    Err("fn must return a lambda".to_string())
                 }
             }
             "quote" => {
                 assert!(list.len() == 2, "quote must be called with one argument");
-                (list[1].clone(), scope.clone())
+                Ok((list[1].clone(), scope.clone()))
             }
             _ => {
-                let head = list[0].clone().eval(scope).0;
+                let head = list[0].clone().eval(scope)?.0;
 
                 eval_list(
                     iter::once(head)
@@ -100,11 +111,12 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> (Sexpr, Scope
             let arguments = list[1..]
                 .iter()
                 .cloned()
-                .map(|arg| arg.eval(scope).0)
-                .collect::<Vec<Sexpr>>();
+                .map(|arg| Ok(arg.eval(scope)?.0))
+                .into_iter()
+                .collect::<Result<Vec<Sexpr>, String>>()?;
 
             if parameters.len() != arguments.len() {
-                panic!("Function called with incorrect number of arguments");
+                return Err("Function called with incorrect number of arguments".to_string());
             }
 
             // zip the args and params together
@@ -123,7 +135,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> (Sexpr, Scope
             let arguments = &list[1..];
 
             if parameters.len() != arguments.len() {
-                panic!("Macro called with incorrect number of arguments");
+                return Err("Macro called with incorrect number of arguments".to_string());
             }
 
             // zip the args and params together
@@ -138,48 +150,51 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> (Sexpr, Scope
 
             // create a new scope with the macro_bindings for inside the macro
             let macro_scope = &scope.with_bindings(&macro_bindings);
-            let expanded = body.clone().eval(macro_scope).0; // evaluate the macro
-            (expanded.eval(scope).0, scope.clone()) // evaluate the result of the macro in the original scope
+            let expanded = body.clone().eval(macro_scope)?.0; // evaluate the macro
+            Ok((expanded.eval(scope)?.0, scope.clone())) // evaluate the result of the macro in the original scope
         }
         (Sexpr::List { sexprs, quasiquote }, _) => eval_list(
-            iter::once(sexprs[0].clone().eval(scope).0)
+            iter::once(sexprs[0].clone().eval(scope)?.0)
                 .chain(sexprs[1..].iter().cloned())
                 .collect::<Vec<Sexpr>>(),
             scope,
             *quasiquote, // TODO revise
         ),
-        (Sexpr::String(_), _) => panic!("Cannot call string value"),
-        (Sexpr::Bool(_), _) => panic!("Cannot call boolean value"),
-        (Sexpr::Int(_), _) => panic!("Cannot call int value"),
-        (Sexpr::Float(_), _) => panic!("Cannot call float value"),
+        (Sexpr::String(_), _) => Err("Cannot call string value".to_string()),
+        (Sexpr::Bool(_), _) => Err("Cannot call boolean value".to_string()),
+        (Sexpr::Int(_), _) => Err("Cannot call int value".to_string()),
+        (Sexpr::Float(_), _) => Err("Cannot call float value".to_string()),
         (Sexpr::BuiltIn(builtin), _) => {
             let arguments = list[1..]
                 .iter()
                 .cloned()
-                .map(|arg| arg.eval(scope).0)
-                .collect::<Vec<Sexpr>>();
-            (builtin.eval(&arguments), scope.clone())
+                .map(|arg| Ok(arg.eval(scope)?.0))
+                .collect::<Result<Vec<Sexpr>, String>>()?;
+            Ok((builtin.eval(&arguments), scope.clone()))
         }
-        (Sexpr::CommaUnquote(_), _) => panic!("Unquote outside of quasiquoted context"),
+        (Sexpr::CommaUnquote(_), _) => Err("Unquote outside of quasiquoted context".to_string()),
     }
 }
 
-fn eval_rest_as_function_declaration(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
+fn eval_rest_as_function_declaration(
+    rest: &[Sexpr],
+    scope: &Scope,
+) -> Result<(Sexpr, Scope), String> {
     match &rest[0] {
         Sexpr::List { quasiquote, sexprs } => {
             if *quasiquote {
-                panic!("quasiquote not allowed in function arguments");
+                return Err("quasiquote not allowed in function arguments".to_string());
             }
 
             // (<function_name> <arg1> <arg2>)
             if let Sexpr::Symbol(func_name) = &sexprs[0] {
-
-                let arg_names = sexprs[1..].iter().map(|expr| {
-                    match expr {
-                        Sexpr::Symbol(name) => name.clone(),
-                        _ => panic!("Function arguments must be identifiers"),
-                    }
-                }).collect::<Vec<String>>();
+                let arg_names = sexprs[1..]
+                    .iter()
+                    .map(|expr| match expr {
+                        Sexpr::Symbol(name) => Ok(name.clone()),
+                        _ => Err("Function arguments must be identifiers".to_string()),
+                    })
+                    .collect::<Result<Vec<String>, String>>()?;
 
                 let function = Sexpr::Function {
                     parameters: arg_names,
@@ -187,18 +202,17 @@ fn eval_rest_as_function_declaration(rest: &[Sexpr], scope: &Scope) -> (Sexpr, S
                 };
 
                 let new_scope = scope.with_bindings(&[(func_name.clone(), function.clone())]);
-                return (function, new_scope.clone());
+                return Ok((function, new_scope.clone()));
             } else {
-                panic!("Function declaration must start with a symbol");
-                
+                return Err("Function declaration must start with a symbol".to_string());
             }
         }
-        _ => panic!("Function declaration must have a list of arguments"),
+        _ => Err("Function declaration must have a list of arguments".to_string()),
     }
 }
 
-fn eval_rest_as_lambda(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
-    let args = parse_as_args(&rest[0]);
+fn eval_rest_as_lambda(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
+    let args = parse_as_args(&rest[0])?;
     let fn_body = rest[1..].to_vec();
 
     // TODO closures ???
@@ -206,117 +220,171 @@ fn eval_rest_as_lambda(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
     // actually should be easy as everything is pure and passed by value
     let _ = scope;
 
-    (
+    Ok((
         Sexpr::Function {
             parameters: args,
             body: Box::new(fn_body),
         },
         scope.clone(),
-    )
+    ))
 }
 
-fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
-    let args = parse_as_args(&rest[0]);
+fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
+    let args = parse_as_args(&rest[0])?;
     let fn_body = &rest[1];
 
     // todo substitute scope into fn_body
     let _ = scope;
 
-    (
+    Ok((
         Sexpr::Macro {
             parameters: args,
             body: Box::new(fn_body.clone()),
         },
         scope.clone(),
-    )
+    ))
 }
 
-fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
+fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
     let binding_exprs = rest[..rest.len() - 1].to_vec();
     let expr = rest.last().expect("let must have a body");
-    let bindings = generate_let_bindings(binding_exprs, scope);
+    let bindings = generate_let_bindings(binding_exprs, scope)?;
     expr.clone().eval(&scope.with_bindings(&bindings))
 }
 
-fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> (Sexpr, Scope) {
+fn eval_rest_as_if(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
     if rest.len() != 3 {
-        panic!("malformed if statement: Must have 3 arguments");
+        return Err("malformed if statement: Must have 3 arguments".to_string());
     }
     let condition = rest[0].clone();
     let if_body = rest[1].clone();
     let else_body = rest[2].clone();
 
     // TODO: encapse this is Sexpr.bool()
-    if let Sexpr::Bool(cond) = condition.eval(scope).0 {
+    if let Sexpr::Bool(cond) = condition.eval(scope)?.0 {
         (if cond { if_body } else { else_body }).eval(scope)
     } else {
-        panic!("If condition must be a boolean");
+        return Err("If condition must be a boolean".to_string());
     }
 }
 
-fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Vec<(String, Sexpr)> {
+fn generate_let_bindings(list: Vec<Sexpr>, scope: &Scope) -> Result<Vec<(String, Sexpr)>, String> {
     list.iter()
         .cloned()
         .map(|node| match node {
             Sexpr::List { quasiquote, sexprs } => {
                 if quasiquote {
-                    panic!("quasiquote not allowed in let bindings");
+                    return Err("quasiquote not allowed in let bindings".to_string());
                 }
                 if sexprs.len() != 2 {
-                    panic!("let binding must be a list of two elements");
+                    return Err("let binding must be a list of two elements".to_string());
                 }
                 if let Sexpr::Symbol(ident) = &sexprs[0] {
-                    let val = sexprs[1].clone().eval(scope).0;
-                    (ident.clone(), val.clone())
+                    let val = sexprs[1].clone().eval(scope)?.0;
+                    Ok((ident.clone(), val.clone()))
                 } else {
-                    panic!("left side of let binding must be an identifier");
+                    Err("left side of let binding must be an identifier".to_string())
                 }
             }
-            _ => panic!("All bindings must be lists"),
+            _ => Err("All bindings must be lists".to_string()),
         })
-        .collect::<Vec<(String, Sexpr)>>()
+        .into_iter()
+        .collect::<Result<Vec<(String, Sexpr)>, String>>()
 }
 
-fn parse_as_args(expr: &Sexpr) -> Vec<String> {
-    if let Sexpr::List { sexprs, quasiquote } = expr {
-        if *quasiquote {
-            panic!("quasiquote not allowed in function arguments");
+fn parse_as_args(expr: &Sexpr) -> Result<Vec<String>, String> {
+    match expr {
+        Sexpr::List { sexprs, quasiquote } => {
+            if *quasiquote {
+                return Err("quasiquote not allowed in function arguments".to_string());
+            }
+            sexprs
+                .iter()
+                .map(|e| match e {
+                    Sexpr::Symbol(ident) => Ok(ident.clone()),
+                    _ => Err("Function arguments must be identifiers".to_string()),
+                })
+                .collect::<Result<Vec<String>, String>>()
         }
-        sexprs
-            .iter()
-            .map(|e| {
-                if let Sexpr::Symbol(ident) = e {
-                    ident.clone()
-                } else {
-                    panic!("Function arguments must be identifiers")
-                }
-            })
-            .collect::<Vec<String>>()
-    } else {
-        panic!("Function arguments must be a list")
+        _ => Err("Function arguments must be a list".to_string()),
     }
 }
 
-fn sequential_eval(list: Vec<Sexpr>, scope: &Scope) -> (Sexpr, Scope) {
+fn sequential_eval(list: Vec<Sexpr>, scope: &Scope) -> Result<(Sexpr, Scope), String> {
     let mut scope = scope.clone();
     let mut i = 0;
     loop {
-        let (res, new_scope) = list[i].clone().eval(&scope);
+        let (res, new_scope) = list[i].clone().eval(&scope)?;
         scope = new_scope;
         i += 1;
         if i == list.len() {
-            return (res, scope);
+            return Ok((res, scope));
         }
     }
-
 }
 
 /// for now, assume that the AST is a single SExpr
 /// and just evaluate it.
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
-pub fn evaluate(ast: Ast) {
-    sequential_eval(ast.expressions, &Scope::new());
+pub fn evaluate(ast: Ast) -> Result<Sexpr, String> {
+    Ok(sequential_eval(ast.expressions, &Scope::new())?.0)
+}
+
+impl Display for Sexpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Sexpr::List { quasiquote, sexprs } => {
+                if *quasiquote {
+                    write!(f, "`")?;
+                }
+                write!(f, "(")?;
+                for (i, sexpr) in sexprs.iter().enumerate() {
+                    write!(f, "{}", sexpr)?;
+                    if i < sexprs.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")?;
+                Ok(())
+            }
+            Sexpr::Symbol(sym) => write!(f, ":{}", sym),
+            Sexpr::String(str) => write!(f, "\"{}\"", str),
+            Sexpr::Bool(b) => write!(f, "{}", b),
+            Sexpr::Int(i) => write!(f, "{}", i),
+            Sexpr::Float(fl) => write!(f, "{}", fl),
+            Sexpr::Function {
+                parameters: _,
+                body: _,
+            } => write!(f, "Function"),
+            Sexpr::Macro {
+                parameters: _,
+                body: _,
+            } => write!(f, "Macro"),
+            Sexpr::BuiltIn(b) => write!(f, "<builtin: {}>", b.symbol),
+            Sexpr::CommaUnquote(sexpr) => write!(f, ",{}", sexpr),
+        }
+    }
+}
+
+pub struct Session {
+    scope: Scope,
+}
+
+impl Session {
+    pub fn new() -> Session {
+        Session {
+            scope: Scope::new(),
+        }
+    }
+
+    /// Evaluates a single expression, mutating the session's scope
+    /// and returning the result of the evaluation.
+    pub fn eval(&mut self, expr: Sexpr) -> Result<Sexpr, String> {
+        let (res, new_scope) = expr.eval(&self.scope)?;
+        self.scope = new_scope;
+        Ok(res)
+    }
 }
 
 #[cfg(test)]
@@ -329,7 +397,7 @@ mod tests {
             sexprs: vec![Sexpr::Symbol("+".to_string()), Sexpr::Int(1), Sexpr::Int(2)],
             quasiquote: false,
         };
-        let output = expr.eval(&Scope::new()).0;
+        let output = expr.eval(&Scope::new()).unwrap().0;
         assert_eq!(output, Sexpr::Int(3));
     }
 
@@ -357,7 +425,7 @@ mod tests {
                 },
             ],
         };
-        let res = sexpr.eval(&Scope::new()).0;
+        let res = sexpr.eval(&Scope::new()).unwrap().0;
         assert_eq!(res, Sexpr::Int(11))
     }
 
@@ -381,7 +449,7 @@ mod tests {
                 },
             ],
         };
-        let res = sexpr.eval(&Scope::new()).0;
+        let res = sexpr.eval(&Scope::new()).unwrap().0;
         assert_eq!(res, Sexpr::Int(6))
     }
 
@@ -433,7 +501,7 @@ mod tests {
                 },
             ],
         };
-        let res = ast.eval(&Scope::new()).0;
+        let res = ast.eval(&Scope::new()).unwrap().0;
         assert_eq!(res, Sexpr::Int(2))
     }
 
@@ -485,7 +553,7 @@ mod tests {
                 },
             ],
         };
-        let res = ast.eval(&Scope::new()).0;
+        let res = ast.eval(&Scope::new()).unwrap().0;
         assert_eq!(res, Sexpr::Int(2))
     }
 
@@ -540,6 +608,6 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(ast.eval(&Scope::new()).0, Sexpr::Int(3))
+        assert_eq!(ast.eval(&Scope::new()).unwrap().0, Sexpr::Int(3))
     }
 }

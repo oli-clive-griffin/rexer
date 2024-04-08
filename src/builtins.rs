@@ -39,7 +39,7 @@ const CONS: BuiltIn = BuiltIn {
                     sexprs: new,
                 }
             }
-            _ => panic!("cons must be called with a list as the second argument"),
+            a => panic!("cons must be called with a list as the second argument, got {:#?}", a),
         }
     },
 };
@@ -180,13 +180,55 @@ const PRINT: BuiltIn = BuiltIn {
     symbol: "print",
     eval: |args| {
         for arg in args {
-            println!("{:?}", arg);
+            println!("{}", arg);
         }
         Sexpr::Bool(true) // TODO introduce a new type for void / unit
     },
 };
 
-pub const BUILTINTS: [BuiltIn; 11] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT];
+const EQ: BuiltIn = BuiltIn {
+    symbol: "=",
+    eval: |args| {
+        if args.len() != 2 {
+            panic!("= must be called with two arguments");
+        }
+        match (&args[0], &args[1]) {
+            (Sexpr::Int(i), Sexpr::Int(j)) => Sexpr::Bool(i == j),
+            // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
+            _ => panic!("= must be called with two integers"),
+        }
+    }
+};
+
+const GT: BuiltIn = BuiltIn {
+    symbol: ">",
+    eval: |args| {
+        if args.len() != 2 {
+            panic!("= must be called with two arguments");
+        }
+        match (&args[0], &args[1]) {
+            (Sexpr::Int(i), Sexpr::Int(j)) => Sexpr::Bool(i > j),
+            // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
+            _ => panic!("= must be called with two integers"),
+        }
+    }
+};
+
+const LT: BuiltIn = BuiltIn {
+    symbol: "<",
+    eval: |args| {
+        if args.len() != 2 {
+            panic!("= must be called with two arguments");
+        }
+        match (&args[0], &args[1]) {
+            (Sexpr::Int(i), Sexpr::Int(j)) => Sexpr::Bool(i < j),
+            // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
+            _ => panic!("= must be called with two integers"),
+        }
+    }
+};
+
+pub const BUILTINTS: [BuiltIn; 14] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT];
 
 #[cfg(test)]
 mod tests {
