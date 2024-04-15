@@ -6,6 +6,8 @@ mod builtins;
 mod evaluator;
 mod lexer;
 mod parser;
+mod compiler;
+mod vm;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

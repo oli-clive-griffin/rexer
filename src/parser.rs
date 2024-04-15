@@ -31,6 +31,7 @@ pub enum Sexpr {
     },
     BuiltIn(BuiltIn),
     CommaUnquote(Box<Sexpr>),
+    Nil,
 }
 
 fn parse_list(rest_tokens: &[Token]) -> Result<(Vec<Sexpr>, usize), String> {

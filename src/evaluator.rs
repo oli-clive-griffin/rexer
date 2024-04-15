@@ -33,9 +33,12 @@ impl Sexpr {
     fn eval(self, scope: &Scope) -> Result<(Sexpr, Scope), String> {
         match self {
             Sexpr::List { sexprs, quasiquote } => eval_list(sexprs, scope, quasiquote),
-            Sexpr::Symbol(sym) => match scope.bindings.get(&sym) {
-                Some(sexpr) => Ok((sexpr.clone(), scope.clone())),
-                None => Err(format!("Symbol {} not found in scope", sym)),
+            Sexpr::Symbol(sym) => match sym.as_str() {
+                "nil" => return Ok((Sexpr::Nil, scope.clone())),
+                _ => match scope.bindings.get(&sym) {
+                    Some(sexpr) => Ok((sexpr.clone(), scope.clone())),
+                    None => Err(format!("Symbol {} not found in scope", sym)),
+                },
             },
             _ => Ok((self, scope.clone())),
         }
@@ -90,12 +93,11 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
                     Err("fn must return a lambda".to_string())
                 }
             }
-            "quote" => {
-                match list.len() {
-                    2 => Ok((list[1].clone(), scope.clone())),
-                    _ => Err("quote must be called with one argument".to_string()),
-                }
-            }
+            "quote" => match list.len() {
+                2 => Ok((list[1].clone(), scope.clone())),
+                _ => Err("quote must be called with one argument".to_string()),
+            },
+            "nil" => Err("cannot call 'nil'".to_string()),
             _ => {
                 let head = list[0].clone().eval(scope)?.0;
 
@@ -173,6 +175,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope, quasiquote: bool) -> Result<(Sexpr
             Ok((builtin.eval(&arguments)?, scope.clone()))
         }
         (Sexpr::CommaUnquote(_), _) => Err("Unquote outside of quasiquoted context".to_string()),
+        (Sexpr::Nil, _) => Err("Cannot call nil".to_string()),
     }
 }
 
@@ -247,7 +250,9 @@ fn eval_rest_as_macro_declaration(rest: &[Sexpr], scope: &Scope) -> Result<(Sexp
 
 fn eval_rest_as_let(rest: &[Sexpr], scope: &Scope) -> Result<(Sexpr, Scope), String> {
     let binding_exprs = rest[..rest.len() - 1].to_vec();
-    let expr = rest.last().ok_or("let must have at least one argument".to_string())?;
+    let expr = rest
+        .last()
+        .ok_or("let must have at least one argument".to_string())?;
     let bindings = generate_let_bindings(binding_exprs, scope)?;
     expr.clone().eval(&scope.with_bindings(&bindings))
 }
@@ -362,6 +367,7 @@ impl Display for Sexpr {
             } => write!(f, "Macro"),
             Sexpr::BuiltIn(b) => write!(f, "<builtin: {}>", b.symbol),
             Sexpr::CommaUnquote(sexpr) => write!(f, ",{}", sexpr),
+            Sexpr::Nil => write!(f, "nil"),
         }
     }
 }
