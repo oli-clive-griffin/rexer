@@ -1,58 +1,76 @@
-use crate::vm::Op;
+// #![allow(unused_variables, unused_imports, dead_code, unused_mut, unused_assignments, unused_unsafe, unused_must_use, unused_parens, unused_import_braces, private_interfaces)]
+use crate::vm::{BytecodeChunk, Op, Value};
 
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum SimpleExpression {
-    Call { op: Op, args: Box<(SimpleExpression, SimpleExpression)> },
-    Constant(u8),
-    If { condition: Box<SimpleExpression>, then: Box<SimpleExpression>, else_: Box<SimpleExpression> },
+    Call {
+        op: Op,
+        args: Box<(SimpleExpression, SimpleExpression)>,
+    },
+    Constant(Value), // TODO don't use this type
+    If {
+        condition: Box<SimpleExpression>,
+        then: Box<SimpleExpression>,
+        else_: Box<SimpleExpression>,
+    },
 }
 
-fn compile_expression(expression: SimpleExpression, code: &mut Vec<u8>) {
+fn compile_expression(
+    expression: SimpleExpression,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<Value>,
+) {
     match expression {
         SimpleExpression::Call { op, args } => {
-            compile_expression(args.0, code);
-            compile_expression(args.1, code);
+            compile_expression(args.0, code, constants);
+            compile_expression(args.1, code, constants);
             code.push(op.into());
         }
         SimpleExpression::Constant(value) => {
+            constants.push(value);
             code.push(Op::Load.into());
-            code.push(value)
-        },
-        SimpleExpression::If { condition, then, else_ } => {
+            code.push(constants.len() as u8 - 1);
+        }
+        SimpleExpression::If {
+            condition,
+            then,
+            else_,
+        } => {
             // IF
-            compile_expression(*condition, code);
+            compile_expression(*condition, code, constants);
 
             // skip to "then"
             code.push(Op::CondJump.into());
             code.push(0x00); // will mutate this later
-            let place_to_put_then_addr = code.len() - 1;
+            let then_jump_idx = code.len() - 1;
 
             // ELSE
-            compile_expression(*else_, code);
-            
+            compile_expression(*else_, code, constants);
+
             // skip to end
             code.push(Op::Jump.into());
             // code[to_then_jump_address as usize] = code.len() as u8;
             code.push(0x00); // will mutate this later
-            let place_to_put_finish_addr = (code.len() - 1) as u8;
+            let finish_jump_idx = code.len() - 1;
 
             // THEN
-            let then_addr = code.len() as u8;
-            code[place_to_put_then_addr] = then_addr;
-            compile_expression(*then, code);
+            let then_jump = (code.len() - then_jump_idx) as u8;
+            code[then_jump_idx] = then_jump;
+            compile_expression(*then, code, constants);
 
             // FINISH
-            let finish_addr = code.len() as u8;
-            code[place_to_put_finish_addr as usize] = finish_addr
-        },
+            let finish_jump = (code.len() - finish_jump_idx) as u8;
+            code[finish_jump_idx as usize] = finish_jump
+        }
     }
 }
 
-fn compile(expression: SimpleExpression) -> Vec<u8> {
+fn compile(expression: SimpleExpression) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
-    compile_expression(expression, &mut code);
-    code
+    let mut constants: Vec<Value> = vec![];
+    compile_expression(expression, &mut code, &mut constants);
+    BytecodeChunk::new(code, constants)
 }
 
 #[cfg(test)]
@@ -65,15 +83,21 @@ mod tests {
     fn test_compile_0() {
         let expression = SimpleExpression::Call {
             op: Op::Add,
-            args: Box::new((SimpleExpression::Constant(5), SimpleExpression::Constant(6))),
+            args: Box::new((
+                SimpleExpression::Constant(Value::Integer(5)),
+                SimpleExpression::Constant(Value::Integer(6)),
+            )),
         };
-        let code = compile(expression);
-        assert_eq!(code, vec![0x00, 0x05, 0x00, 0x06, 0x01]);
+        let bc = compile(expression);
+        assert_eq!(
+            bc.code,
+            vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into(),]
+        );
+        assert_eq!(bc.constants, vec![Value::Integer(5), Value::Integer(6)]);
 
-        let mut vm = VM::new();
-        vm.load(code);
-        vm.run();
-        println!("{:?}", vm.stack);
+        // let mut vm = VM::new();
+        // vm.run(bc);
+        // println!("{:?}", vm.stack);
     }
 
     #[test]
@@ -83,51 +107,76 @@ mod tests {
             args: Box::new((
                 SimpleExpression::Call {
                     op: Op::Add,
-                    args: Box::new((SimpleExpression::Constant(1), SimpleExpression::Constant(2))),
+                    args: Box::new((
+                        SimpleExpression::Constant(Value::Integer(11)),
+                        SimpleExpression::Constant(Value::Integer(12)),
+                    )),
                 },
                 SimpleExpression::Call {
                     op: Op::Add,
-                    args: Box::new((SimpleExpression::Constant(3), SimpleExpression::Constant(4))),
+                    args: Box::new((
+                        SimpleExpression::Constant(Value::Integer(13)),
+                        SimpleExpression::Constant(Value::Integer(14)),
+                    )),
                 },
             )),
         };
-        let code = compile(expression);
-        assert_eq!(code, vec![
-            Op::Load.into(), 1,
-            Op::Load.into(), 2,
-            Op::Add.into(),
-            Op::Load.into(), 3,
-            Op::Load.into(), 4,
-            Op::Add.into(),
-            Op::Add.into(),]);
+        let bc = compile(expression);
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Load.into(), 0,
+                Op::Load.into(), 1,
+                Op::Add.into(),
+                Op::Load.into(), 2,
+                Op::Load.into(), 3,
+                Op::Add.into(),
+                Op::Add.into(),
+            ]
+        );
+        assert_eq!(
+            bc.constants,
+            vec![
+                Value::Integer(11),
+                Value::Integer(12),
+                Value::Integer(13),
+                Value::Integer(14),
+            ]
+        );
 
-        let mut vm = VM::new();
-        vm.load(code);
-        vm.run();
-        println!("{:?}", vm.stack);
+        // let mut vm = VM::new();
+        // vm.load(code);
+        // vm.run();
+        // println!("{:?}", vm.stack);
     }
 
     #[test]
     fn test_if() {
         let expression = SimpleExpression::If {
-            condition: Box::new(SimpleExpression::Constant(1)),
-            then: Box::new(SimpleExpression::Constant(2)),
-            else_: Box::new(SimpleExpression::Constant(3)),
+            condition: Box::new(SimpleExpression::Constant(Value::Integer(11))),
+            then: Box::new(SimpleExpression::Constant(Value::Integer(12))),
+            else_: Box::new(SimpleExpression::Constant(Value::Integer(13))),
         };
-        let code = compile(expression);
-        assert_eq!(code, vec![
-            Op::Load.into(),
-            1,
-            Op::CondJump.into(),
-            8, // addr of "load 2" ---.
-            Op::Load.into(), //       |
-            3, //                     |
-            Op::Jump.into(), //       |
-            10, // addr of finish --. |
-            Op::Load.into(), // <---|-'
-            2, //                   |
-            // <--------------------'
-        ]);
+        let bc = compile(expression);
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Load.into(), 0,
+                Op::CondJump.into(), 5,
+                Op::Load.into(), 1,
+                Op::Jump.into(), 3,
+                Op::Load.into(), 2,
+            ]
+        );
+        assert_eq!(
+            bc.constants,
+            vec![Value::Integer(11), Value::Integer(13), Value::Integer(12)]
+        );
+
+        // NOTE: This test shouldn't be here but good for easy testing
+        let mut vm = VM::new();
+        vm.run(bc);
+        assert_eq!(vm.stack, vec![Value::Integer(12)])
     }
 
     #[test]
@@ -136,52 +185,90 @@ mod tests {
             condition: Box::new(SimpleExpression::Call {
                 op: Op::Add,
                 args: Box::new((
-                    SimpleExpression::Constant(1),
-                    SimpleExpression::Constant(2),
+                    SimpleExpression::Constant(Value::Integer(11)),
+                    SimpleExpression::Constant(Value::Integer(12)),
                 )),
             }),
             then: Box::new(SimpleExpression::Call {
                 op: Op::Add,
                 args: Box::new((
-                    SimpleExpression::Constant(3),
-                    SimpleExpression::Constant(4),
+                    SimpleExpression::Constant(Value::Integer(13)),
+                    SimpleExpression::Constant(Value::Integer(14)),
                 )),
             }),
             else_: Box::new(SimpleExpression::Call {
                 op: Op::Add,
                 args: Box::new((
-                    SimpleExpression::Constant(5),
-                    SimpleExpression::Constant(6),
+                    SimpleExpression::Constant(Value::Integer(15)),
+                    SimpleExpression::Constant(Value::Integer(16)),
                 )),
             }),
         };
-        let code = compile(expression);
-        assert_eq!(code, vec![
-            Op::Load.into(), 1,
-            Op::Load.into(), 2,
-            Op::Add.into(),
-
-            Op::CondJump.into(),
-            14,
-
-            Op::Load.into(), 5,
-            Op::Load.into(), 6,
-            Op::Add.into(),
-
-            Op::Jump.into(),
-            19,
-
-            /* idx 14 */ 
-            Op::Load.into(), 3,
-            Op::Load.into(), 4,
-            Op::Add.into(),
-            // idx 19
-        ]);
+        let bc = compile(expression);
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Load.into(), 0,
+                Op::Load.into(), 1,
+                Op::Add.into(),
+                Op::CondJump.into(), 8,
+                Op::Load.into(), 2,
+                Op::Load.into(), 3,
+                Op::Add.into(),
+                Op::Jump.into(), 6,
+                Op::Load.into(), 4,
+                Op::Load.into(), 5,
+                Op::Add.into(),
+                // idx 19
+            ]
+        );
+        assert_eq!(
+            bc.constants,
+            vec![
+                Value::Integer(11),
+                Value::Integer(12),
+                Value::Integer(15),
+                Value::Integer(16),
+                Value::Integer(13),
+                Value::Integer(14),
+            ]
+        );
 
         // NOTE: This test shouldn't be here but good for easy testing
-        // let mut vm = VM::new();
-        // vm.load(code);
-        // vm.run();
-        // assert_eq!(vm.stack, vec![7])
+        let mut vm = VM::new();
+        vm.run(bc);
+        assert_eq!(vm.stack, vec![Value::Integer(27)])
     }
+
+    // #[test]
+    // fn asdf() {
+    //     let bc = BytecodeChunk {
+    //         code: vec![
+    //             Op::Load.into(), 0,
+    //             Op::Load.into(), 1,
+    //             Op::Add.into(),
+    //             Op::CondJump.into(), 8,
+    //             Op::Load.into(), 2,
+    //             Op::Load.into(), 3,
+    //             Op::Add.into(),
+    //             Op::Jump.into(), 6,
+    //             Op::Load.into(), 4,
+    //             Op::Load.into(), 5,
+    //             Op::Add.into(),
+    //             // idx 19
+    //         ],
+    //         constants: vec![
+    //             Value::Integer(11),
+    //             Value::Integer(12),
+    //             Value::Integer(15),
+    //             Value::Integer(16),
+    //             Value::Integer(13),
+    //             Value::Integer(14),
+    //         ]
+    //     };
+
+    //     let mut vm = VM::new();
+    //     vm.run(bc);
+    //     assert_eq!(vm.stack, vec![Value::Integer(27)])
+    // }
 }
