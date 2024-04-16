@@ -1,7 +1,5 @@
 // #![allow(unused_variables, unused_imports, dead_code, unused_mut, unused_assignments, unused_unsafe, unused_must_use, unused_parens, unused_import_braces, private_interfaces)]
 
-use std::mem;
-
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// THOUGHTS
@@ -15,7 +13,6 @@ pub struct VM {
                            // function_table: Vec<ByteCodeFunction>,
 }
 
-#[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Value {
     Integer(i64),
@@ -34,13 +31,6 @@ impl Value {
         }
     }
 
-    fn from_bytes(bytes: [u8; 16]) -> Self {
-        unsafe { mem::transmute(bytes) }
-    }
-
-    fn to_bytes(self) -> [u8; 16] {
-        unsafe { mem::transmute(self) }
-    }
 }
 
 pub struct BytecodeChunk {
@@ -285,3 +275,15 @@ mod tests {
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 }
+
+
+// not needed for now
+// // #[repr(C)] // for the struct definition
+// impl Value {
+//     fn from_bytes(bytes: [u8; 16]) -> Self {
+//         unsafe { mem::transmute(bytes) }
+//     }
+//     fn to_bytes(self) -> [u8; 16] {
+//         unsafe { mem::transmute(self) }
+//     }
+// }
