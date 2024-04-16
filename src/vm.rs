@@ -1,7 +1,11 @@
 #![allow(unused, dead_code)]
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use std::alloc::{alloc, dealloc, Layout};
+use std::{
+    alloc::{alloc, dealloc, Layout},
+    collections::HashMap,
+    hash::Hash,
+};
 
 /// THOUGHTS
 /// First thought is that we may be able to mirror evaluator.~.eval with "produce bytecode that "
@@ -12,6 +16,7 @@ pub struct VM {
     // code: Vec<u8>,
     // function_table: Vec<ByteCodeFunction>,
     pub stack: Vec<StackValue>, // todo remove pub
+    globals: HashMap<String, StackValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +89,8 @@ pub enum Op {
     Jump = 6,     // jumps to the specified address
     CondJump = 7, // jumps to the specified address if the top of the stack is not zero
     FuncCall = 8,
+    VarDeclare = 9,
+    VarReference = 10,
     DebugPrint = 255, // prints the stack
 }
 
@@ -94,6 +101,7 @@ impl VM {
             // current_chunk
             // code: vec![],
             stack: vec![],
+            globals: HashMap::new(),
             // function_table: vec![],
         }
     }
@@ -137,19 +145,31 @@ impl VM {
                     self.ip = unsafe { self.ip.add(offset) };
                 }
                 Op::Add => {
-                    let a = self.stack.pop().unwrap();
+                    // reverse order because we pop from the stack
                     let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
                     self.stack.push(match (a, b) {
                         (StackValue::Integer(a), StackValue::Integer(b)) => {
                             StackValue::Integer(a + b)
+                        }
+                        (StackValue::Object(a), StackValue::Object(b)) => {
+                            match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
+                                (ObjectValue::String(a), ObjectValue::String(b)) => {
+                                    let obj_ptr = unsafe {
+                                        allocate_value(ObjectValue::String(a.clone() + b))
+                                    };
+                                    StackValue::Object(obj_ptr)
+                                }
+                                _ => todo!(),
+                            }
                         }
                         _ => todo!(),
                     });
                     self.advance();
                 }
                 Op::Sub => {
-                    let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
                     self.stack.push(match (a, b) {
                         (StackValue::Integer(a), StackValue::Integer(b)) => {
                             StackValue::Integer(a - b)
@@ -159,8 +179,8 @@ impl VM {
                     self.advance();
                 }
                 Op::Mul => {
-                    let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
                     self.stack.push(match (a, b) {
                         (StackValue::Integer(a), StackValue::Integer(b)) => {
                             StackValue::Integer(a * b)
@@ -170,8 +190,8 @@ impl VM {
                     self.advance();
                 }
                 Op::Div => {
-                    let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
                     self.stack.push(match (a, b) {
                         (StackValue::Integer(a), StackValue::Integer(b)) => {
                             StackValue::Integer(a / b)
@@ -200,6 +220,41 @@ impl VM {
                 //         arity,
                 //     } = &self.function_table[func_idx as usize];
                 // }
+                Op::VarDeclare => {
+                    let name = self.consume_next_byte_as_constant(&chunk);
+                    let value = self.stack.pop().unwrap();
+                    match name {
+                        StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                            ObjectValue::String(s) => {
+                                self.globals.insert(s.clone(), value);
+                            }
+                            _ => panic!("expected string"),
+                        },
+                        _ => panic!("expected string"),
+                    }
+                    self.advance();
+                }
+                Op::VarReference => {
+                    let name = match self.consume_next_byte_as_constant(&chunk) {
+                        StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                            ObjectValue::String(s) => s,
+                            _ => panic!("expected string value for reference"),
+                        },
+                        _ => panic!("expected string value for reference"),
+                    };
+
+                    // let name = match self.stack.pop().unwrap() {
+                    //     StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                    //         ObjectValue::String(s) => s,
+                    //         _ => panic!("expected string value for reference"),
+                    //     },
+                    //     _ => panic!("expected string value for reference"),
+                    // };
+
+                    let stack_val = self.globals.get(name).unwrap().clone();
+                    self.stack.push(stack_val);
+                    self.advance();
+                }
                 Op::DebugPrint => {
                     println!("{:?}", self.stack);
                     self.advance();
@@ -211,17 +266,13 @@ impl VM {
 
     fn consume_next_byte_as_constant(&mut self, chunk: &BytecodeChunk) -> StackValue {
         unsafe {
-            self.ip = self.ip.add(1);
+            self.ip = self.ip.add(1); // IMPORTANT: clone
             match chunk.constants[*self.ip as usize].clone() {
                 ConstantsValue::Integer(v) => StackValue::Integer(v),
                 ConstantsValue::Float(v) => StackValue::Float(v),
                 ConstantsValue::Boolean(v) => StackValue::Boolean(v),
                 ConstantsValue::Nil => StackValue::Nil,
                 ConstantsValue::Object(value) => {
-                    // let obj_ptr = allocate(HeapObject {
-                    //     next: std::ptr::null_mut(),
-                    //     value,
-                    // });
                     let obj_ptr = allocate_value(value);
                     StackValue::Object(obj_ptr)
                 }
@@ -249,13 +300,23 @@ unsafe fn allocate<T>(obj: T) -> *mut T {
     obj_ptr
 }
 
+static mut head: *mut HeapObject = std::ptr::null_mut();
 unsafe fn allocate_value(obj_value: ObjectValue) -> *mut HeapObject {
     let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
     obj_ptr.write(HeapObject {
-        next: std::ptr::null_mut(),
+        next: head,
         value: obj_value,
     });
-    println!("LEAKING MEMORY allocated {:?}", obj_ptr);
+    head = obj_ptr;
+
+    println!("allocated {:?} (knowingly leaking memory for now)", obj_ptr);
+    println!("heap:");
+    let mut current = head;
+    while !current.is_null() {
+        println!("- {:?}", &(*current).value);
+        current = (*current).next;
+    }
+
     obj_ptr
 }
 
@@ -362,12 +423,75 @@ mod tests {
         let string = match vm.stack[0] {
             StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(str) => str,
-            }
+            },
             _ => panic!(),
         };
 
         assert_eq!(string, "Hello, world!");
         assert_eq!(vm.ip, unsafe { ptr.add(2) });
+    }
+
+    #[test]
+    fn test_string_concat() {
+        let chunk = BytecodeChunk {
+            code: vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into()],
+            constants: vec![
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantsValue::Object(ObjectValue::String("bar".to_string())),
+            ],
+        };
+        let ptr = chunk.code.as_ptr();
+
+        let mut vm = VM::new();
+        vm.run(chunk);
+        assert_eq!(vm.stack.len(), 1);
+
+        let string = match vm.stack[0] {
+            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                ObjectValue::String(str) => str,
+            },
+            _ => panic!(),
+        };
+
+        assert_eq!(string, "foobar");
+        assert_eq!(vm.ip, unsafe { ptr.add(5) });
+    }
+
+    #[test]
+    fn test_var_declare() {
+        let chunk = BytecodeChunk {
+            code: vec![Op::Load.into(), 0, Op::VarDeclare.into(), 1],
+            constants: vec![
+                ConstantsValue::Integer(5), // value
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
+            ],
+        };
+        let ptr = chunk.code.as_ptr();
+
+        let mut vm = VM::new();
+        vm.run(chunk);
+        assert_eq!(vm.stack.len(), 0);
+        assert_eq!(vm.globals.len(), 1);
+        assert_eq!(vm.globals.get("foo").unwrap(), &StackValue::Integer(5));
+        assert_eq!(vm.ip, unsafe { ptr.add(4) });
+    }
+
+    #[test]
+    fn test_var_reference() {
+        let chunk = BytecodeChunk {
+            code: vec![Op::Load.into(), 0, Op::VarDeclare.into(), 1, Op::VarReference.into(), 1],
+            constants: vec![
+                ConstantsValue::Integer(5), // value
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
+            ],
+        };
+        let ptr = chunk.code.as_ptr();
+
+        let mut vm = VM::new();
+        vm.run(chunk);
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0], StackValue::Integer(5));
+        assert_eq!(vm.ip, unsafe { ptr.add(6) });
     }
 }
 
