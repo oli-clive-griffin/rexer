@@ -4,10 +4,23 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 /// First thought is that we may be able to mirror evaluator.~.eval with "produce bytecode that "
 
 /// simple stack-based virtual machine for integer arithmetic
-struct VM {
+pub struct VM {
     ip: usize,
     code: Vec<u8>,
-    stack: Vec<i32>,
+    pub stack: Vec<i32>, // todo remove pub
+}
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, Clone, IntoPrimitive, TryFromPrimitive)]
+pub enum Op {
+    Load = 0x00,
+    Add = 0x01,
+    Sub = 0x02,
+    Mul = 0x03,
+    Div = 0x04,
+    Neg = 0x05,
+    Jump = 0x06, // jumps to the specified address
+    CondJump = 0x07, // jumps to the specified address if the top of the stack is not zero
 }
 
 impl VM {
@@ -29,93 +42,73 @@ impl VM {
                 return;
             }
 
-            let byte = self.code[self.ip];
+            // probably should switch back to raw bytes
+            // but this is nice for development
+            let byte: Op  = self.code[self.ip].try_into().unwrap();
             match byte {
-                0x00 => {
-                    let val = self.conume_byte();
-                    self.stack.push(val);
+                Op::Load => {
+                    let val = self.consume_byte();
+                    self.stack.push(val as i32);
                     self.ip += 1;
                 }
-                0x01 => {
+                Op::Add => {
                     let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
                     self.stack.push(a + b);
                     self.ip += 1;
                 }
-                0x02 => {
+                Op::Sub => {
                     let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
                     self.stack.push(a - b);
                     self.ip += 1;
                 }
-                0x03 => {
+                Op::Mul => {
                     let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
                     self.stack.push(a * b);
                     self.ip += 1;
                 }
-                0x04 => {
+                Op::Div => {
                     let a = self.stack.pop().unwrap();
                     let b = self.stack.pop().unwrap();
                     self.stack.push(a / b);
                     self.ip += 1;
                 }
-                0x05 => {
+                Op::Neg => {
                     let a = self.stack.pop().unwrap();
                     self.stack.push(-a);
                     self.ip += 1;
                 }
-                _ => {
-                    panic!("unknown opcode: {}", byte);
+                Op::CondJump => {
+                    let condition_val = self.stack.pop().unwrap();
+                    let addr = self.consume_byte();
+                    if condition_val != 0 {
+                        self.ip = addr as usize;
+                    } else {
+                        self.ip += 1;
+                    }
+                }
+                Op::Jump => {
+                    let addr = self.consume_byte();    
+                    self.ip = addr as usize;
                 }
             }
         }
     }
 
-    fn conume_byte(&mut self) -> i32 {
+    fn consume_byte(&mut self) -> u8 {
         self.ip += 1;
-        let byte = self.code[self.ip] as i32;
+        let byte = self.code[self.ip];
+        byte
+    }
+
+    fn current_byte(&mut self) -> u8 {
+        let byte = self.code[self.ip];
         byte
     }
 }
 
-#[repr(u8)]
-#[derive(Debug, PartialEq, Clone, IntoPrimitive, TryFromPrimitive)]
-enum Op {
-    Load = 0x00,
-    Add = 0x01,
-    Sub = 0x02,
-    Mul = 0x03,
-    Div = 0x04,
-    Neg = 0x05,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum SimpleExpression {
-    Call { op: Op, args: Vec<SimpleExpression> },
-    Constant(u8),
-}
-
-fn compile_expression(expression: SimpleExpression, code: &mut Vec<u8>) {
-    match expression {
-        SimpleExpression::Call { op, args } => {
-            for arg in args {
-                compile_expression(arg, code);
-            }
-            code.push(op.into());
-        }
-        SimpleExpression::Constant(value) => {
-            code.push(Op::Load.into());
-            code.push(value)
-        },
-    }
-}
-
-fn compile(expression: SimpleExpression) -> Vec<u8> {
-    let mut code: Vec<u8> = vec![];
-    compile_expression(expression, &mut code);
-    code
-}
 
 #[cfg(test)]
 mod tests {
@@ -141,17 +134,46 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_0() {
-        let expression = SimpleExpression::Call {
-            op: Op::Add,
-            args: vec![SimpleExpression::Constant(5), SimpleExpression::Constant(6)],
-        };
-        let code = compile(expression);
-        assert_eq!(code, vec![0x00, 0x05, 0x00, 0x06, 0x01]);
+    fn test_cond() {
+        let bytecode = vec![
+            Op::Load.into(),
+            1,
+            Op::CondJump.into(),
+            8,
+            Op::Load.into(),
+            3,
+            Op::Jump.into(),
+            10,
+            Op::Load.into(),
+            2,
+        ];
 
         let mut vm = VM::new();
-        vm.load(code);
+        vm.load(bytecode);
         vm.run();
-        println!("{:?}", vm.stack);
+        assert_eq!(vm.stack, vec![2]);
+    }
+
+    #[test]
+    fn test_cond_not() {
+        let bytecode = vec![
+            Op::Load.into(),
+            0,
+            Op::CondJump.into(),
+            8,
+            Op::Load.into(),
+            3,
+            Op::Jump.into(),
+            10,
+            Op::Load.into(),
+            2,
+        ];
+
+        let mut vm = VM::new();
+        vm.load(bytecode);
+        vm.run();
+        assert_eq!(vm.stack, vec![3]);
     }
 }
+
+
