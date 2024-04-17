@@ -1,6 +1,6 @@
 #![allow(unused, dead_code)]
 
-use crate::vm::{BytecodeChunk, Op, ConstantsValue};
+use crate::vm::{BytecodeChunk, ConstantsValue, ObjectValue, Op};
 
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
@@ -15,6 +15,12 @@ pub enum SimpleExpression {
         else_: Box<SimpleExpression>,
     },
     Constant(ConstantsValue), // TODO don't use this type
+    DeclareGlobal {
+        name: String,
+        value: Box<SimpleExpression>,
+    },
+    Symbol(String),
+    DebugPrint(Box<SimpleExpression>)
 }
 
 fn compile_expression(
@@ -64,15 +70,43 @@ fn compile_expression(
             let finish_jump = (code.len() - finish_jump_idx) as u8;
             code[finish_jump_idx as usize] = finish_jump
         }
+        SimpleExpression::DeclareGlobal { name, value } => {
+            compile_expression(*value, code, constants);
+            code.push(Op::DeclareGlobal.into());
+            constants.push(ConstantsValue::Object(ObjectValue::String(name)));
+            code.push(constants.len() as u8 - 1);
+        }
+        SimpleExpression::Symbol(symbol) => {
+            code.push(Op::Reference.into());
+            let constant_idx = constants.iter().position(|x| match x {
+                ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
+                _ => false,
+            }).expect("Symbol not found in constants");
+            code.push(constant_idx as u8);
+        }
+        SimpleExpression::DebugPrint(expr) => {
+            compile_expression(*expr, code, constants);
+            code.push(Op::DebugPrint.into());
+        }
     }
 }
 
-fn compile(expression: SimpleExpression) -> BytecodeChunk {
+// fn compile_program(expression: SimpleExpression) -> BytecodeChunk {
+//     let mut code: Vec<u8> = vec![];
+//     let mut constants: Vec<ConstantsValue> = vec![];
+//     compile_expression(expression, &mut code, &mut constants);
+//     BytecodeChunk::new(code, constants)
+// }
+
+fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
     let mut constants: Vec<ConstantsValue> = vec![];
-    compile_expression(expression, &mut code, &mut constants);
+    for expression in expressions {
+        compile_expression(expression, &mut code, &mut constants);
+    }
     BytecodeChunk::new(code, constants)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -89,7 +123,7 @@ mod tests {
                 SimpleExpression::Constant(ConstantsValue::Integer(6)),
             )),
         };
-        let bc = compile(expression);
+        let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
             vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into(),]
@@ -122,7 +156,7 @@ mod tests {
                 },
             )),
         };
-        let bc = compile(expression);
+        let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -162,7 +196,7 @@ mod tests {
             then: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(12))),
             else_: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(13))),
         };
-        let bc = compile(expression);
+        let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -214,7 +248,7 @@ mod tests {
                 )),
             }),
         };
-        let bc = compile(expression);
+        let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -256,5 +290,114 @@ mod tests {
         let mut vm = VM::new();
         vm.run(bc);
         assert_eq!(vm.stack, vec![StackValue::Integer(27)])
+    }
+
+    #[test]
+    fn test_declare_global() {
+        let expression = SimpleExpression::DeclareGlobal {
+            name: "foo".to_string(),
+            value: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(11))),
+        };
+        let bc = compile_program(vec![expression]);
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Load.into(),
+                0,
+                Op::DeclareGlobal.into(),
+                1,
+            ]
+        );
+        assert_eq!(
+            bc.constants,
+            vec![
+                ConstantsValue::Integer(11),
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+            ]
+        );
+
+        // NOTE: This test shouldn't be here but good for easy testing
+        let mut vm = VM::new();
+        vm.run(bc);
+        assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(11)))
+    }
+
+    #[test]
+    fn test_assign_global_as_expr() {
+        let program = vec![
+            SimpleExpression::DeclareGlobal {
+                name: "foo".to_string(),
+                value: Box::new(SimpleExpression::Call {
+                    op: Op::Add,
+                    args: Box::new((
+                        SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                        SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                    )),
+                }),
+            },
+            SimpleExpression::Symbol("foo".to_string()),
+        ];
+        
+        let bc = compile_program(program);
+
+        assert_eq!(
+            bc.constants,
+            vec![
+                ConstantsValue::Integer(11),
+                ConstantsValue::Integer(12),
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+            ]
+        );
+
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Load.into(),
+                0,
+                Op::Load.into(),
+                1,
+                Op::Add.into(),
+                Op::DeclareGlobal.into(),
+                2,
+                Op::Reference.into(),
+                2,
+            ]
+        );
+
+        // NOTE: This test shouldn't be here but good for easy testing
+        let mut vm = VM::new();
+        vm.run(bc);
+        assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(23)));
+        assert_eq!(vm.stack, vec![StackValue::Integer(23)])
+    }
+
+    #[test]
+    fn e2e() {
+        let program = vec![
+            SimpleExpression::DeclareGlobal {
+                name: "foo".to_string(),
+                value: Box::new(SimpleExpression::Call {
+                    op: Op::Add,
+                    args: Box::new((
+                        SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                        SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                    )),
+                }),
+            },
+            SimpleExpression::DebugPrint(Box::new(SimpleExpression::If {
+                condition: Box::new(SimpleExpression::Symbol("foo".to_string())),
+                then: Box::new(SimpleExpression::Constant(ConstantsValue::Object(ObjectValue::String("true".to_string())))),
+                else_: Box::new(SimpleExpression::Constant(ConstantsValue::Object(ObjectValue::String("false".to_string())))),
+            })),
+        ];
+
+        let bc = compile_program(program);
+
+        // NOTE: This test shouldn't be here but good for easy testing
+        let mut vm = VM::new();
+        vm.run(bc);
+        println!("\n\n");
+        println!("{:?}", vm.stack);
+        println!("{:?}", vm.globals);
     }
 }

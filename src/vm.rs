@@ -16,7 +16,7 @@ pub struct VM {
     // code: Vec<u8>,
     // function_table: Vec<ByteCodeFunction>,
     pub stack: Vec<StackValue>, // todo remove pub
-    globals: HashMap<String, StackValue>,
+    pub globals: HashMap<String, StackValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,8 +89,8 @@ pub enum Op {
     Jump = 6,     // jumps to the specified address
     CondJump = 7, // jumps to the specified address if the top of the stack is not zero
     FuncCall = 8,
-    VarDeclare = 9,
-    VarReference = 10,
+    DeclareGlobal = 9,
+    Reference = 10,
     DebugPrint = 255, // prints the stack
 }
 
@@ -116,13 +116,15 @@ impl VM {
         let end_ptr = unsafe { self.ip.add(chunk.code.len()) };
 
         loop {
-            if self.ip >= end_ptr {
+            if self.ip == end_ptr {
                 return;
+            } else if self.ip > end_ptr {
+                panic!("ip out of bounds");
             }
 
             // probably should switch back to raw bytes
             // but this is nice for development
-            let byte: Op = unsafe { *self.ip }.try_into().unwrap();
+            let byte = unsafe { *self.ip }.try_into().unwrap();
 
             match byte {
                 Op::Load => {
@@ -220,9 +222,9 @@ impl VM {
                 //         arity,
                 //     } = &self.function_table[func_idx as usize];
                 // }
-                Op::VarDeclare => {
-                    let name = self.consume_next_byte_as_constant(&chunk);
+                Op::DeclareGlobal => {
                     let value = self.stack.pop().unwrap();
+                    let name = self.consume_next_byte_as_constant(&chunk);
                     match name {
                         StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                             ObjectValue::String(s) => {
@@ -231,10 +233,11 @@ impl VM {
                             _ => panic!("expected string"),
                         },
                         _ => panic!("expected string"),
+
                     }
                     self.advance();
                 }
-                Op::VarReference => {
+                Op::Reference => {
                     let name = match self.consume_next_byte_as_constant(&chunk) {
                         StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                             ObjectValue::String(s) => s,
@@ -256,7 +259,17 @@ impl VM {
                     self.advance();
                 }
                 Op::DebugPrint => {
-                    println!("{:?}", self.stack);
+                    let val = match self.stack.pop().unwrap() {
+                        StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                            ObjectValue::String(s) => s.clone(),
+                        },
+                        StackValue::Integer(i) => i.to_string(),
+                        StackValue::Float(f) => f.to_string(),
+                        StackValue::Boolean(b) => b.to_string(),
+                        StackValue::Nil => "nil".to_string(),
+                    };
+
+                    println!("{:?}", val);
                     self.advance();
                 }
                 _ => todo!(),
@@ -309,15 +322,22 @@ unsafe fn allocate_value(obj_value: ObjectValue) -> *mut HeapObject {
     });
     head = obj_ptr;
 
-    println!("allocated {:?} (knowingly leaking memory for now)", obj_ptr);
-    println!("heap:");
-    let mut current = head;
-    while !current.is_null() {
-        println!("- {:?}", &(*current).value);
-        current = (*current).next;
-    }
+    #[cfg(debug_assertions)]
+    print_stack(head);
 
     obj_ptr
+}
+
+fn print_stack(head_: *mut HeapObject) {
+    unsafe {
+        println!("allocated {:?} (knowingly leaking memory for now)", (*head_).clone());
+        println!("heap:");
+        let mut current = head_;
+        while !current.is_null() {
+            println!("- {:?}", &(*current).value);
+            current = (*current).next;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -460,7 +480,7 @@ mod tests {
     #[test]
     fn test_var_declare() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::VarDeclare.into(), 1],
+            code: vec![Op::Load.into(), 0, Op::DeclareGlobal.into(), 1],
             constants: vec![
                 ConstantsValue::Integer(5), // value
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
@@ -479,7 +499,7 @@ mod tests {
     #[test]
     fn test_var_reference() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::VarDeclare.into(), 1, Op::VarReference.into(), 1],
+            code: vec![Op::Load.into(), 0, Op::DeclareGlobal.into(), 1, Op::Reference.into(), 1],
             constants: vec![
                 ConstantsValue::Integer(5), // value
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
