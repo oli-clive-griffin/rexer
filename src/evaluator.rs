@@ -3,7 +3,8 @@ use std::fmt::Display;
 use std::iter;
 
 use crate::builtins::BUILTINTS;
-use crate::parser::{Ast, Sexpr};
+use crate::parser::Ast;
+use crate::sexpr::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Scope {

@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
 };
+use crate::sexpr::Sexpr;
 
 /// THOUGHTS
 /// First thought is that we may be able to mirror evaluator.~.eval with "produce bytecode that "
@@ -313,17 +314,17 @@ unsafe fn allocate<T>(obj: T) -> *mut T {
     obj_ptr
 }
 
-static mut head: *mut HeapObject = std::ptr::null_mut();
+static mut HEAD: *mut HeapObject = std::ptr::null_mut();
 unsafe fn allocate_value(obj_value: ObjectValue) -> *mut HeapObject {
     let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
     obj_ptr.write(HeapObject {
-        next: head,
+        next: HEAD,
         value: obj_value,
     });
-    head = obj_ptr;
+    HEAD = obj_ptr;
 
     #[cfg(debug_assertions)]
-    print_stack(head);
+    print_stack(HEAD);
 
     obj_ptr
 }

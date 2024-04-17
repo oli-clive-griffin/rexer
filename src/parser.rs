@@ -1,37 +1,10 @@
-pub use crate::lexer::{Literal, NumericLiteral};
-use crate::{
-    builtins::BuiltIn,
-    lexer::{Token, LR},
-};
+use crate::lexer::{Literal, NumericLiteral};
+use crate::lexer::{Token, LR};
+use crate::sexpr::Sexpr;
 
 #[derive(Debug, PartialEq)]
 pub struct Ast {
     pub expressions: Vec<Sexpr>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Sexpr {
-    List {
-        quasiquote: bool,
-        sexprs: Vec<Sexpr>,
-    },
-    // List(Vec<Sexpr>),
-    Symbol(String),
-    String(String),
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    Function {
-        parameters: Vec<String>,
-        body: Vec<Sexpr>,
-    },
-    Macro {
-        parameters: Vec<String>,
-        body: Box<Sexpr>,
-    },
-    BuiltIn(BuiltIn),
-    CommaUnquote(Box<Sexpr>),
-    Nil,
 }
 
 fn parse_list(rest_tokens: &[Token]) -> Result<(Vec<Sexpr>, usize), String> {

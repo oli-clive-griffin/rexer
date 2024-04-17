@@ -1,4 +1,4 @@
-use crate::parser::Sexpr;
+use crate::sexpr::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltIn {

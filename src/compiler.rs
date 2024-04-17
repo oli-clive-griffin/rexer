@@ -98,7 +98,7 @@ fn compile_expression(
 //     BytecodeChunk::new(code, constants)
 // }
 
-fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
+pub fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
     let mut constants: Vec<ConstantsValue> = vec![];
     for expression in expressions {

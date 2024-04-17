@@ -1,13 +1,12 @@
-use std::io::Write;
-
-use crate::evaluator::Session;
-
 mod builtins;
+mod compiler;
 mod evaluator;
 mod lexer;
 mod parser;
-mod compiler;
+mod sexpr;
 mod vm;
+
+use std::io::Write;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -44,10 +43,8 @@ fn run_file(file_path: &String) {
 }
 
 fn repl() {
-    let bold_escape_start = "\u{001b}[1m";
-    let bold_escape_end = "\u{001b}[0m";
-    println!("{}Rusp{}", bold_escape_start, bold_escape_end);
-    let mut session = Session::new();
+    println!("\u{001b}[1mRusp\u{001b}[0m");
+    let mut session = evaluator::Session::new();
 
     loop {
         print!(">> ");
@@ -61,11 +58,11 @@ fn repl() {
         match res {
             Ok(res) => println!("{}", res),
             Err(e) => println!("\u{001b}[31mError:\u{001b}[0m {}", e),
-         }
+        }
     }
 }
 
-fn run_string(input: String, session: &mut Session) -> Result<parser::Sexpr, String> {
+fn run_string(input: String, session: &mut evaluator::Session) -> Result<sexpr::Sexpr, String> {
     let tokens = lexer::lex(&input)?;
     let sexpr = parser::parse_sexpr(&tokens)?.0;
     session.eval(sexpr)
