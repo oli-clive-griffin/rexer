@@ -30,7 +30,7 @@ fn compiler() {
     let bc = compile_program(program);
 
     // NOTE: This test shouldn't be here but good for easy testing
-    let mut vm = VM::new();
+    let mut vm = VM::default();
     vm.run(bc);
     println!("\n\n");
     println!("{:?}", vm.stack);

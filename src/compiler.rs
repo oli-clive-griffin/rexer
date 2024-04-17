@@ -68,7 +68,7 @@ fn compile_expression(
 
             // FINISH
             let finish_jump = (code.len() - finish_jump_idx) as u8;
-            code[finish_jump_idx as usize] = finish_jump
+            code[finish_jump_idx] = finish_jump
         }
         SimpleExpression::DeclareGlobal { name, value } => {
             compile_expression(*value, code, constants);
@@ -130,7 +130,7 @@ mod tests {
         );
         assert_eq!(bc.constants, vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)]);
 
-        // let mut vm = VM::new();
+        // let mut vm = VM::default();
         // vm.run(bc);
         // println!("{:?}", vm.stack);
     }
@@ -183,7 +183,7 @@ mod tests {
             ]
         );
 
-        // let mut vm = VM::new();
+        // let mut vm = VM::default();
         // vm.load(code);
         // vm.run();
         // println!("{:?}", vm.stack);
@@ -218,7 +218,7 @@ mod tests {
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack, vec![StackValue::Integer(12)])
     }
@@ -287,7 +287,7 @@ mod tests {
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack, vec![StackValue::Integer(27)])
     }
@@ -317,7 +317,7 @@ mod tests {
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(11)))
     }
@@ -365,7 +365,7 @@ mod tests {
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(23)));
         assert_eq!(vm.stack, vec![StackValue::Integer(23)])
@@ -394,7 +394,7 @@ mod tests {
         let bc = compile_program(program);
 
         // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(bc);
         println!("\n\n");
         println!("{:?}", vm.stack);

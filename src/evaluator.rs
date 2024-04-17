@@ -35,7 +35,7 @@ impl Sexpr {
         match self {
             Sexpr::List { sexprs, quasiquote } => eval_list(sexprs, scope, quasiquote),
             Sexpr::Symbol(sym) => match sym.as_str() {
-                "nil" => return Ok((Sexpr::Nil, scope.clone())),
+                "nil" => Ok((Sexpr::Nil, scope.clone())),
                 _ => match scope.bindings.get(&sym) {
                     Some(sexpr) => Ok((sexpr.clone(), scope.clone())),
                     None => Err(format!("Symbol {} not found in scope", sym)),
@@ -375,6 +375,12 @@ impl Display for Sexpr {
 
 pub struct Session {
     scope: Scope,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Session {

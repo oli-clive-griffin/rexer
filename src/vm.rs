@@ -1,12 +1,12 @@
 #![allow(unused, dead_code)]
 
+use crate::sexpr::Sexpr;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::{
     alloc::{alloc, dealloc, Layout},
     collections::HashMap,
     hash::Hash,
 };
-use crate::sexpr::Sexpr;
 
 /// THOUGHTS
 /// First thought is that we may be able to mirror evaluator.~.eval with "produce bytecode that "
@@ -23,6 +23,7 @@ pub struct VM {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectValue {
     String(String),
+    Function(Box<BytecodeChunk>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +63,7 @@ impl StackValue {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct BytecodeChunk {
     pub code: Vec<u8>,
     pub constants: Vec<ConstantsValue>,
@@ -92,18 +94,22 @@ pub enum Op {
     FuncCall = 8,
     DeclareGlobal = 9,
     Reference = 10,
+    DebugEnd = 254,   // ends the program
     DebugPrint = 255, // prints the stack
+}
+
+impl Default for VM {
+    fn default() -> Self {
+         Self::new()
+    }
 }
 
 impl VM {
     pub fn new() -> VM {
         VM {
-            ip: std::ptr::null_mut(),
-            // current_chunk
-            // code: vec![],
-            stack: vec![],
-            globals: HashMap::new(),
-            // function_table: vec![],
+            ip:  std::ptr::null_mut(),
+            stack: Vec::default(),
+            globals: HashMap::default(),
         }
     }
 
@@ -114,17 +120,11 @@ impl VM {
     // pub fn run(&mut self) {
     pub fn run(&mut self, chunk: BytecodeChunk) {
         self.ip = chunk.code.as_ptr();
-        let end_ptr = unsafe { self.ip.add(chunk.code.len()) };
+        // let mut end_ptr = unsafe { self.ip.add(chunk.code.len()) };
 
         loop {
-            if self.ip == end_ptr {
-                return;
-            } else if self.ip > end_ptr {
-                panic!("ip out of bounds");
-            }
-
             // probably should switch back to raw bytes
-            // but this is nice for development
+            // but this is nice for development.
             let byte = unsafe { *self.ip }.try_into().unwrap();
 
             match byte {
@@ -234,7 +234,6 @@ impl VM {
                             _ => panic!("expected string"),
                         },
                         _ => panic!("expected string"),
-
                     }
                     self.advance();
                 }
@@ -247,14 +246,6 @@ impl VM {
                         _ => panic!("expected string value for reference"),
                     };
 
-                    // let name = match self.stack.pop().unwrap() {
-                    //     StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
-                    //         ObjectValue::String(s) => s,
-                    //         _ => panic!("expected string value for reference"),
-                    //     },
-                    //     _ => panic!("expected string value for reference"),
-                    // };
-
                     let stack_val = self.globals.get(name).unwrap().clone();
                     self.stack.push(stack_val);
                     self.advance();
@@ -263,6 +254,7 @@ impl VM {
                     let val = match self.stack.pop().unwrap() {
                         StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                             ObjectValue::String(s) => s.clone(),
+                            ObjectValue::Function(f) => "function".to_string(),
                         },
                         StackValue::Integer(i) => i.to_string(),
                         StackValue::Float(f) => f.to_string(),
@@ -273,7 +265,22 @@ impl VM {
                     println!("{:?}", val);
                     self.advance();
                 }
-                _ => todo!(),
+                Op::FuncCall => {
+                    let mut func = match self.consume_next_byte_as_constant(&chunk) {
+                        StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+                            ObjectValue::Function(f) => f.clone(), // TODO FIX
+                            _ => panic!("expected function"),
+                        },
+                        _ => panic!("expected function"),
+                    };
+                    // self.ip = func.code.as_mut_ptr();
+                    // println!("setting ip to {:?}", self.ip);
+                    let return_ip = self.ip;
+                    self.run(*func); // TODO FIX
+                    self.ip = return_ip;
+                    self.advance();
+                }
+                Op::DebugEnd => return,
             }
         }
     }
@@ -303,7 +310,9 @@ impl VM {
 
     fn advance(&mut self) {
         unsafe {
+            print!("advancing ip {:?}", self.ip);
             self.ip = self.ip.add(1);
+            println!(" to {:?}", self.ip)
         }
     }
 }
@@ -323,15 +332,18 @@ unsafe fn allocate_value(obj_value: ObjectValue) -> *mut HeapObject {
     });
     HEAD = obj_ptr;
 
-    #[cfg(debug_assertions)]
-    print_stack(HEAD);
+    // #[cfg(debug_assertions)]
+    // print_stack(HEAD);
 
     obj_ptr
 }
 
 fn print_stack(head_: *mut HeapObject) {
     unsafe {
-        println!("allocated {:?} (knowingly leaking memory for now)", (*head_).clone());
+        println!(
+            "allocated {:?} (knowingly leaking memory for now)",
+            (*head_).clone()
+        );
         println!("heap:");
         let mut current = head_;
         while !current.is_null() {
@@ -347,9 +359,9 @@ mod tests {
 
     #[test]
     fn test_load() {
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         let chunk = BytecodeChunk {
-            code: vec![0x00, 0x00],
+            code: vec![Op::Load.into(), 0x00, Op::DebugEnd.into()],
             constants: vec![ConstantsValue::Integer(5)],
         };
         vm.run(chunk);
@@ -358,11 +370,18 @@ mod tests {
 
     #[test]
     fn test_simple_math() {
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         // push 5 push 6 add
         // 5 + 6 = 11
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into()],
+            code: vec![
+                Op::Load.into(),
+                0,
+                Op::Load.into(),
+                1,
+                Op::Add.into(),
+                Op::DebugEnd.into(),
+            ],
             constants: vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)],
         };
         vm.run(chunk);
@@ -382,10 +401,11 @@ mod tests {
             3, // jump to the end
             Op::Load.into(),
             2,
+            Op::DebugEnd.into(),
         ];
         let ptr = bytecode.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(BytecodeChunk {
             code: bytecode,
             constants: vec![
@@ -412,6 +432,7 @@ mod tests {
                 3,
                 Op::Load.into(),
                 2,
+                Op::DebugEnd.into(),
             ],
             constants: vec![
                 ConstantsValue::Integer(0),
@@ -421,7 +442,7 @@ mod tests {
         };
         let ptr = chunk.code.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack, vec![StackValue::Integer(3)]);
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
@@ -430,20 +451,21 @@ mod tests {
     #[test]
     fn test_string() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0],
+            code: vec![Op::Load.into(), 0, Op::DebugEnd.into()],
             constants: vec![ConstantsValue::Object(ObjectValue::String(
                 "Hello, world!".to_string(),
             ))],
         };
         let ptr = chunk.code.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack[0] {
             StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(str) => str,
+                _ => panic!(),
             },
             _ => panic!(),
         };
@@ -455,7 +477,14 @@ mod tests {
     #[test]
     fn test_string_concat() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into()],
+            code: vec![
+                Op::Load.into(),
+                0,
+                Op::Load.into(),
+                1,
+                Op::Add.into(),
+                Op::DebugEnd.into(),
+            ],
             constants: vec![
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())),
                 ConstantsValue::Object(ObjectValue::String("bar".to_string())),
@@ -463,13 +492,14 @@ mod tests {
         };
         let ptr = chunk.code.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack[0] {
             StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(str) => str,
+                _ => panic!(),
             },
             _ => panic!(),
         };
@@ -481,15 +511,21 @@ mod tests {
     #[test]
     fn test_var_declare() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::DeclareGlobal.into(), 1],
+            code: vec![
+                Op::Load.into(),
+                0,
+                Op::DeclareGlobal.into(),
+                1,
+                Op::DebugEnd.into(),
+            ],
             constants: vec![
-                ConstantsValue::Integer(5), // value
+                ConstantsValue::Integer(5),                                     // value
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 0);
         assert_eq!(vm.globals.len(), 1);
@@ -500,19 +536,44 @@ mod tests {
     #[test]
     fn test_var_reference() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::DeclareGlobal.into(), 1, Op::Reference.into(), 1],
+            code: vec![
+                Op::Load.into(),
+                0,
+                Op::DeclareGlobal.into(),
+                1,
+                Op::Reference.into(),
+                1,
+                Op::DebugEnd.into(),
+            ],
             constants: vec![
-                ConstantsValue::Integer(5), // value
+                ConstantsValue::Integer(5),                                     // value
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
 
-        let mut vm = VM::new();
+        let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
         assert_eq!(vm.stack[0], StackValue::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(6) });
+    }
+
+    #[test]
+    fn test_function() {
+        let bc = BytecodeChunk {
+            code: vec![Op::FuncCall.into(), 0, Op::DebugEnd.into()],
+            constants: vec![ConstantsValue::Object(ObjectValue::Function(Box::new(
+                BytecodeChunk {
+                    code: vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into(), Op::DebugEnd.into()],
+                    constants: vec![ConstantsValue::Integer(21), ConstantsValue::Integer(22)],
+                },
+            )))],
+        };
+
+        let mut vm = VM::default();
+        vm.run(bc);
+        assert_eq!(vm.stack.len(), 1);
     }
 }
 
