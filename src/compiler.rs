@@ -5,9 +5,13 @@ use crate::vm::{BytecodeChunk, ConstantsValue, ObjectValue, Op};
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum SimpleExpression {
-    Call {
+    OpCall {
         op: Op,
         args: Box<(SimpleExpression, SimpleExpression)>,
+    },
+    FunctionCall {
+        name: String,
+        args: Vec<SimpleExpression>,
     },
     If {
         condition: Box<SimpleExpression>,
@@ -29,14 +33,14 @@ fn compile_expression(
     constants: &mut Vec<ConstantsValue>,
 ) {
     match expression {
-        SimpleExpression::Call { op, args } => {
+        SimpleExpression::OpCall { op, args } => {
             compile_expression(args.0, code, constants);
             compile_expression(args.1, code, constants);
             code.push(op.into());
         }
         SimpleExpression::Constant(value) => {
             constants.push(value);
-            code.push(Op::Load.into());
+            code.push(Op::Constant.into());
             code.push(constants.len() as u8 - 1);
         }
         SimpleExpression::If {
@@ -88,6 +92,16 @@ fn compile_expression(
             compile_expression(*expr, code, constants);
             code.push(Op::DebugPrint.into());
         }
+        SimpleExpression::FunctionCall { name, args } => {
+            for arg in args {
+                unimplemented!("args not supported yet");
+                compile_expression(arg, code, constants);
+            }
+            code.push(Op::FuncCall.into());
+            let function_idx: usize = todo!();
+            code.push(constants.len() as u8 - 1);
+        }
+        
     }
 }
 
@@ -116,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_compile_0() {
-        let expression = SimpleExpression::Call {
+        let expression = SimpleExpression::OpCall {
             op: Op::Add,
             args: Box::new((
                 SimpleExpression::Constant(ConstantsValue::Integer(5)),
@@ -126,7 +140,7 @@ mod tests {
         let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
-            vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into(),]
+            vec![Op::Constant.into(), 0, Op::Constant.into(), 1, Op::Add.into(),]
         );
         assert_eq!(bc.constants, vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)]);
 
@@ -137,17 +151,17 @@ mod tests {
 
     #[test]
     fn test_compile_compound() {
-        let expression = SimpleExpression::Call {
+        let expression = SimpleExpression::OpCall {
             op: Op::Add,
             args: Box::new((
-                SimpleExpression::Call {
+                SimpleExpression::OpCall {
                     op: Op::Add,
                     args: Box::new((
                         SimpleExpression::Constant(ConstantsValue::Integer(11)),
                         SimpleExpression::Constant(ConstantsValue::Integer(12)),
                     )),
                 },
-                SimpleExpression::Call {
+                SimpleExpression::OpCall {
                     op: Op::Add,
                     args: Box::new((
                         SimpleExpression::Constant(ConstantsValue::Integer(13)),
@@ -160,14 +174,14 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Add.into(),
-                Op::Load.into(),
+                Op::Constant.into(),
                 2,
-                Op::Load.into(),
+                Op::Constant.into(),
                 3,
                 Op::Add.into(),
                 Op::Add.into(),
@@ -200,15 +214,15 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
                 Op::CondJump.into(),
                 5,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Jump.into(),
                 3,
-                Op::Load.into(),
+                Op::Constant.into(),
                 2,
             ]
         );
@@ -226,21 +240,21 @@ mod tests {
     #[test]
     fn test_if_complex() {
         let expression = SimpleExpression::If {
-            condition: Box::new(SimpleExpression::Call {
+            condition: Box::new(SimpleExpression::OpCall {
                 op: Op::Add,
                 args: Box::new((
                     SimpleExpression::Constant(ConstantsValue::Integer(11)),
                     SimpleExpression::Constant(ConstantsValue::Integer(12)),
                 )),
             }),
-            then: Box::new(SimpleExpression::Call {
+            then: Box::new(SimpleExpression::OpCall {
                 op: Op::Add,
                 args: Box::new((
                     SimpleExpression::Constant(ConstantsValue::Integer(13)),
                     SimpleExpression::Constant(ConstantsValue::Integer(14)),
                 )),
             }),
-            else_: Box::new(SimpleExpression::Call {
+            else_: Box::new(SimpleExpression::OpCall {
                 op: Op::Add,
                 args: Box::new((
                     SimpleExpression::Constant(ConstantsValue::Integer(15)),
@@ -252,23 +266,23 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Add.into(),
                 Op::CondJump.into(),
                 8,
-                Op::Load.into(),
+                Op::Constant.into(),
                 2,
-                Op::Load.into(),
+                Op::Constant.into(),
                 3,
                 Op::Add.into(),
                 Op::Jump.into(),
                 6,
-                Op::Load.into(),
+                Op::Constant.into(),
                 4,
-                Op::Load.into(),
+                Op::Constant.into(),
                 5,
                 Op::Add.into(),
                 // idx 19
@@ -302,7 +316,7 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
                 Op::DeclareGlobal.into(),
                 1,
@@ -327,7 +341,7 @@ mod tests {
         let program = vec![
             SimpleExpression::DeclareGlobal {
                 name: "foo".to_string(),
-                value: Box::new(SimpleExpression::Call {
+                value: Box::new(SimpleExpression::OpCall {
                     op: Op::Add,
                     args: Box::new((
                         SimpleExpression::Constant(ConstantsValue::Integer(11)),
@@ -352,9 +366,9 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Add.into(),
                 Op::DeclareGlobal.into(),
@@ -376,7 +390,7 @@ mod tests {
         let program = vec![
             SimpleExpression::DeclareGlobal {
                 name: "foo".to_string(),
-                value: Box::new(SimpleExpression::Call {
+                value: Box::new(SimpleExpression::OpCall {
                     op: Op::Add,
                     args: Box::new((
                         SimpleExpression::Constant(ConstantsValue::Integer(11)),

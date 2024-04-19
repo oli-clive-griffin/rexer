@@ -5,7 +5,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::{
     alloc::{alloc, dealloc, Layout},
     collections::HashMap,
-    hash::Hash,
+    hash::Hash, panic::PanicInfo,
 };
 
 /// THOUGHTS
@@ -18,6 +18,7 @@ pub struct VM {
     // function_table: Vec<ByteCodeFunction>,
     pub stack: Vec<StackValue>, // todo remove pub
     pub globals: HashMap<String, StackValue>,
+    callframes: Vec<CallFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,13 @@ pub enum StackValue {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+struct CallFrame {
+    return_address: *const u8,
+    stack_frame_start: *const StackValue,
+    arity: usize
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConstantsValue {
     Integer(i64),
     Float(f64),
@@ -59,6 +67,7 @@ impl StackValue {
             StackValue::Boolean(b) => *b,
             StackValue::Nil => false,
             StackValue::Object(_) => false,
+            // StackValue::Addr(addr) => panic!("should not happen, (calling truthy on address {:?})", addr),
         }
     }
 }
@@ -83,33 +92,36 @@ impl BytecodeChunk {
 #[repr(u8)]
 #[derive(Debug, PartialEq, Clone, IntoPrimitive, TryFromPrimitive)]
 pub enum Op {
-    Load = 0,
-    Add = 1,
-    Sub = 2,
-    Mul = 3,
-    Div = 4,
-    Neg = 5,
-    Jump = 6,     // jumps to the specified address
-    CondJump = 7, // jumps to the specified address if the top of the stack is not zero
-    FuncCall = 8,
-    DeclareGlobal = 9,
-    Reference = 10,
+    Constant = 0,
+    Local = 1,
+    Add = 2,
+    Sub = 3,
+    Mul = 4,
+    Div = 5,
+    Neg = 6,
+    Jump = 7,     // jumps to the specified address
+    CondJump = 8, // jumps to the specified address if the top of the stack is not zero
+    FuncCall = 9,
+    Return = 10,
+    DeclareGlobal = 11,
+    Reference = 12,
     DebugEnd = 254,   // ends the program
     DebugPrint = 255, // prints the stack
 }
 
 impl Default for VM {
     fn default() -> Self {
-         Self::new()
+        Self::new()
     }
 }
 
 impl VM {
     pub fn new() -> VM {
         VM {
-            ip:  std::ptr::null_mut(),
+            ip: std::ptr::null_mut(),
             stack: Vec::default(),
             globals: HashMap::default(),
+            callframes: Vec::default(),
         }
     }
 
@@ -123,12 +135,13 @@ impl VM {
         // let mut end_ptr = unsafe { self.ip.add(chunk.code.len()) };
 
         loop {
+            println!("stack: {:?}", self.stack);
             // probably should switch back to raw bytes
             // but this is nice for development.
             let byte = unsafe { *self.ip }.try_into().unwrap();
 
             match byte {
-                Op::Load => {
+                Op::Constant => {
                     let constant = self.consume_next_byte_as_constant(&chunk); // advances here
                     self.stack.push(constant);
                     self.advance();
@@ -166,7 +179,10 @@ impl VM {
                                 _ => todo!(),
                             }
                         }
-                        _ => todo!(),
+                        otherwise => {
+                            print!("{:?}", otherwise);
+                            unimplemented!()
+                        }
                     });
                     self.advance();
                 }
@@ -260,35 +276,90 @@ impl VM {
                         StackValue::Float(f) => f.to_string(),
                         StackValue::Boolean(b) => b.to_string(),
                         StackValue::Nil => "nil".to_string(),
+                        // StackValue::Addr(addr) => format!("address: <{:?}>", addr),
                     };
 
                     println!("{:?}", val);
                     self.advance();
                 }
                 Op::FuncCall => {
-                    let mut func = match self.consume_next_byte_as_constant(&chunk) {
-                        StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
-                            ObjectValue::Function(f) => f.clone(), // TODO FIX
+                    // expects the stack to be:
+                    // [..., function, arg1, arg2, ... argN]
+                    // and the operand to be the arity of the function, so we can lookup the function and args
+
+                    let arity = match self.consume_next_byte_as_constant(&chunk) {
+                        StackValue::Integer(arity) => arity,
+                        _ => panic!("expected function"),
+                    };
+
+                    if arity < 0 {
+                        panic!("negative arity");
+                    };
+                    let func_obj = match self.peek(arity as usize) {
+                        StackValue::Object(obj) => match &unsafe { &**obj }.value {
+                            ObjectValue::Function(func) => func,
                             _ => panic!("expected function"),
                         },
                         _ => panic!("expected function"),
                     };
-                    // self.ip = func.code.as_mut_ptr();
-                    // println!("setting ip to {:?}", self.ip);
-                    let return_ip = self.ip;
-                    self.run(*func); // TODO FIX
-                    self.ip = return_ip;
+                    self.callframes.push(CallFrame {
+                        return_address: self.ip,
+                        stack_frame_start: unsafe { self.stack.as_ptr().add(self.stack.len() - arity as usize - 1) },
+                        arity: arity as usize
+                    });
+                    self.ip = func_obj.code.as_ptr();
+                }
+                Op::Local => {
+                    let current_callframe = self
+                        .callframes
+                        .last()
+                        .expect("expected a call frame for a local variable");
+
+                    let stack_frame_start = current_callframe.stack_frame_start;
+
+                    let offset = self.consume_next_byte_as_byte() as usize;
+                    let value = unsafe { stack_frame_start.add(offset).read() }; // todo understand why ".read()" is needed
+                    println!("loading local variable {:?}", value);
+                    self.stack.push(value.clone());
+                    self.advance()
+                }
+                Op::Return => {
+                    let frame = self.callframes.pop().expect("expected a call frame to return from");
+                    self.ip = frame.return_address;
+
+                    // clean up the stack
+                    let returnval = self.stack.pop().expect("expected a return value");
+
+                    // pop the arguments
+                    for _ in 0..frame.arity as usize {
+                        self.stack.pop();
+                    }
+
+                    // pop the function
+                    self.stack.pop();
+                    
+                    self.stack.push(returnval);
+
                     self.advance();
                 }
-                Op::DebugEnd => return,
+                Op::DebugEnd => {
+                    println!("end of program");
+                    return;
+                }
             }
         }
+    }
+
+    fn peek(&self, back: usize) -> &StackValue {
+        println!("peeking {:?} back into vec {:?}", back, self.stack);
+        &self.stack[self.stack.len() - back - 1]
     }
 
     fn consume_next_byte_as_constant(&mut self, chunk: &BytecodeChunk) -> StackValue {
         unsafe {
             self.ip = self.ip.add(1); // IMPORTANT: clone
-            match chunk.constants[*self.ip as usize].clone() {
+            let constant_idx = *self.ip as usize;
+            match chunk.constants[constant_idx].clone() {
                 ConstantsValue::Integer(v) => StackValue::Integer(v),
                 ConstantsValue::Float(v) => StackValue::Float(v),
                 ConstantsValue::Boolean(v) => StackValue::Boolean(v),
@@ -310,9 +381,7 @@ impl VM {
 
     fn advance(&mut self) {
         unsafe {
-            print!("advancing ip {:?}", self.ip);
             self.ip = self.ip.add(1);
-            println!(" to {:?}", self.ip)
         }
     }
 }
@@ -338,20 +407,20 @@ unsafe fn allocate_value(obj_value: ObjectValue) -> *mut HeapObject {
     obj_ptr
 }
 
-fn print_stack(head_: *mut HeapObject) {
-    unsafe {
-        println!(
-            "allocated {:?} (knowingly leaking memory for now)",
-            (*head_).clone()
-        );
-        println!("heap:");
-        let mut current = head_;
-        while !current.is_null() {
-            println!("- {:?}", &(*current).value);
-            current = (*current).next;
-        }
-    }
-}
+// fn print_heap(head_: *mut HeapObject) {
+//     unsafe {
+//         println!(
+//             "allocated {:?} (knowingly leaking memory for now)",
+//             (*head_).clone()
+//         );
+//         println!("heap:");
+//         let mut current = head_;
+//         while !current.is_null() {
+//             println!("- {:?}", &(*current).value);
+//             current = (*current).next;
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -361,7 +430,7 @@ mod tests {
     fn test_load() {
         let mut vm = VM::default();
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0x00, Op::DebugEnd.into()],
+            code: vec![Op::Constant.into(), 0x00, Op::DebugEnd.into()],
             constants: vec![ConstantsValue::Integer(5)],
         };
         vm.run(chunk);
@@ -375,9 +444,9 @@ mod tests {
         // 5 + 6 = 11
         let chunk = BytecodeChunk {
             code: vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Add.into(),
                 Op::DebugEnd.into(),
@@ -391,15 +460,15 @@ mod tests {
     #[test]
     fn test_cond() {
         let bytecode = vec![
-            Op::Load.into(),
+            Op::Constant.into(),
             0,
             Op::CondJump.into(),
             5, // jump to the load
-            Op::Load.into(),
+            Op::Constant.into(),
             1,
             Op::Jump.into(),
             3, // jump to the end
-            Op::Load.into(),
+            Op::Constant.into(),
             2,
             Op::DebugEnd.into(),
         ];
@@ -422,15 +491,15 @@ mod tests {
     fn test_cond_not() {
         let chunk = BytecodeChunk {
             code: vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
                 Op::CondJump.into(),
                 5,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Jump.into(),
                 3,
-                Op::Load.into(),
+                Op::Constant.into(),
                 2,
                 Op::DebugEnd.into(),
             ],
@@ -451,7 +520,7 @@ mod tests {
     #[test]
     fn test_string() {
         let chunk = BytecodeChunk {
-            code: vec![Op::Load.into(), 0, Op::DebugEnd.into()],
+            code: vec![Op::Constant.into(), 0, Op::DebugEnd.into()],
             constants: vec![ConstantsValue::Object(ObjectValue::String(
                 "Hello, world!".to_string(),
             ))],
@@ -478,9 +547,9 @@ mod tests {
     fn test_string_concat() {
         let chunk = BytecodeChunk {
             code: vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
-                Op::Load.into(),
+                Op::Constant.into(),
                 1,
                 Op::Add.into(),
                 Op::DebugEnd.into(),
@@ -512,7 +581,7 @@ mod tests {
     fn test_var_declare() {
         let chunk = BytecodeChunk {
             code: vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
                 Op::DeclareGlobal.into(),
                 1,
@@ -537,7 +606,7 @@ mod tests {
     fn test_var_reference() {
         let chunk = BytecodeChunk {
             code: vec![
-                Op::Load.into(),
+                Op::Constant.into(),
                 0,
                 Op::DeclareGlobal.into(),
                 1,
@@ -562,21 +631,52 @@ mod tests {
     #[test]
     fn test_function() {
         let bc = BytecodeChunk {
-            code: vec![Op::FuncCall.into(), 0, Op::DebugEnd.into()],
-            constants: vec![ConstantsValue::Object(ObjectValue::Function(Box::new(
-                BytecodeChunk {
-                    code: vec![Op::Load.into(), 0, Op::Load.into(), 1, Op::Add.into(), Op::DebugEnd.into()],
-                    constants: vec![ConstantsValue::Integer(21), ConstantsValue::Integer(22)],
-                },
-            )))],
+            code: vec![
+                Op::Constant.into(),
+                0, // load the function
+                Op::Constant.into(),
+                1, // load the argument 20
+                Op::Constant.into(),
+                2, // load the argument 30
+                Op::FuncCall.into(),
+                3, // call the function with 2 arguments
+                Op::DebugEnd.into(),
+            ],
+            constants: vec![
+                ConstantsValue::Object(ObjectValue::Function(Box::new(BytecodeChunk {
+                    code: vec![
+                        Op::Local.into(),
+                        // make variables 1-indexed as the function itself is at 0 (maybe? (bad idea? (probably)))
+                        1, // load the first argument from back in the stack
+                        Op::Local.into(),
+                        2, // load the second argument from back in the stack
+                        Op::Add.into(),
+                        Op::Return.into(),
+                    ],
+                    constants: vec![],
+                }))),
+                ConstantsValue::Integer(20),
+                ConstantsValue::Integer(30),
+                ConstantsValue::Integer(2),
+            ],
         };
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.last().unwrap(), &StackValue::Integer(50));
+        assert_eq!(vm.stack, vec![StackValue::Integer(50)]);
     }
 }
 
+// let name = match self.consume_next_byte_as_constant(&chunk) {
+//     StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+//         ObjectValue::String(s) => s,
+//         _ => panic!("expected string value for reference"),
+//     },
+//     _ => panic!("expected string value for reference"),
+// };
+
+// let name = get_obejct(self, &chunk, String);
 // not needed for now
 // // #[repr(C)] // for the struct definition
 // impl StackValue {

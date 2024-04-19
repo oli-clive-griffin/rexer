@@ -1,4 +1,4 @@
-use risp::{
+use rusp::{
     compiler::{compile_program, SimpleExpression},
     vm::{ConstantsValue, ObjectValue, Op, VM},
 };
@@ -8,7 +8,7 @@ fn compiler() {
     let program = vec![
         SimpleExpression::DeclareGlobal {
             name: "foo".to_string(),
-            value: Box::new(SimpleExpression::Call {
+            value: Box::new(SimpleExpression::OpCall {
                 op: Op::Add,
                 args: Box::new((
                     SimpleExpression::Constant(ConstantsValue::Integer(11)),
