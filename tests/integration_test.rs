@@ -1,6 +1,6 @@
 use rusp::{
     compiler::{compile_program, SimpleExpression},
-    vm::{ConstantsValue, ObjectValue, Op, VM},
+    vm::{ConstantsValue, ObjectValue, VM},
 };
 
 #[test]
@@ -8,13 +8,10 @@ fn compiler() {
     let program = vec![
         SimpleExpression::DeclareGlobal {
             name: "foo".to_string(),
-            value: Box::new(SimpleExpression::OpCall {
-                op: Op::Add,
-                args: Box::new((
-                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                )),
-            }),
+            value: Box::new(SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            )))),
         },
         SimpleExpression::DebugPrint(Box::new(SimpleExpression::If {
             condition: Box::new(SimpleExpression::Symbol("foo".to_string())),

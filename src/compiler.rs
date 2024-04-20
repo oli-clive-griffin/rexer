@@ -1,14 +1,16 @@
 #![allow(unused, dead_code)]
 
-use crate::vm::{BytecodeChunk, ConstantsValue, ObjectValue, Op};
+use std::collections::HashMap;
+
+use crate::vm::{BytecodeChunk, ConstantsValue, Function, ObjectValue, Op};
 
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum SimpleExpression {
-    OpCall {
-        op: Op,
-        args: Box<(SimpleExpression, SimpleExpression)>,
-    },
+    Add(Box<(SimpleExpression, SimpleExpression)>),
+    Mul(Box<(SimpleExpression, SimpleExpression)>),
+    Sub(Box<(SimpleExpression, SimpleExpression)>),
+    Div(Box<(SimpleExpression, SimpleExpression)>),
     FunctionCall {
         name: String,
         args: Vec<SimpleExpression>,
@@ -24,7 +26,7 @@ pub enum SimpleExpression {
         value: Box<SimpleExpression>,
     },
     Symbol(String),
-    DebugPrint(Box<SimpleExpression>)
+    DebugPrint(Box<SimpleExpression>),
 }
 
 fn compile_expression(
@@ -33,10 +35,25 @@ fn compile_expression(
     constants: &mut Vec<ConstantsValue>,
 ) {
     match expression {
-        SimpleExpression::OpCall { op, args } => {
-            compile_expression(args.0, code, constants);
-            compile_expression(args.1, code, constants);
-            code.push(op.into());
+        SimpleExpression::Add(args) => {
+            compile_expression((*args).0, code, constants);
+            compile_expression((*args).1, code, constants);
+            code.push(Op::Add.into());
+        }
+        SimpleExpression::Sub(args) => {
+            compile_expression((*args).0, code, constants);
+            compile_expression((*args).1, code, constants);
+            code.push(Op::Sub.into());
+        }
+        SimpleExpression::Mul(args) => {
+            compile_expression((*args).0, code, constants);
+            compile_expression((*args).1, code, constants);
+            code.push(Op::Mul.into());
+        }
+        SimpleExpression::Div(args) => {
+            compile_expression((*args).0, code, constants);
+            compile_expression((*args).1, code, constants);
+            code.push(Op::Div.into());
         }
         SimpleExpression::Constant(value) => {
             constants.push(value);
@@ -81,11 +98,14 @@ fn compile_expression(
             code.push(constants.len() as u8 - 1);
         }
         SimpleExpression::Symbol(symbol) => {
-            code.push(Op::Reference.into());
-            let constant_idx = constants.iter().position(|x| match x {
-                ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
-                _ => false,
-            }).expect("Symbol not found in constants");
+            code.push(Op::ReferenceGlobal.into());
+            let constant_idx = constants
+                .iter()
+                .position(|x| match x {
+                    ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
+                    _ => false,
+                })
+                .expect("Symbol not found in constants");
             code.push(constant_idx as u8);
         }
         SimpleExpression::DebugPrint(expr) => {
@@ -93,24 +113,32 @@ fn compile_expression(
             code.push(Op::DebugPrint.into());
         }
         SimpleExpression::FunctionCall { name, args } => {
+            // todo this is shit but fine for now
+            let function_constants_idx = constants
+                .iter()
+                .position(|x| match x {
+                    ConstantsValue::Object(ObjectValue::Function(Function { name: n, .. })) => {
+                        n == &name
+                    }
+                    _ => false,
+                })
+                .expect("Symbol not found in constants");
+            code.push(Op::Constant.into());
+            code.push(function_constants_idx as u8);
+
+            let arity = args.len();
+            let arity = if arity > 255 { panic!() } else { arity as u8 };
+
             for arg in args {
-                unimplemented!("args not supported yet");
                 compile_expression(arg, code, constants);
             }
+
+            // finally, put the func-call op code, whose operand is the arity
             code.push(Op::FuncCall.into());
-            let function_idx: usize = todo!();
-            code.push(constants.len() as u8 - 1);
+            code.push(arity)
         }
-        
     }
 }
-
-// fn compile_program(expression: SimpleExpression) -> BytecodeChunk {
-//     let mut code: Vec<u8> = vec![];
-//     let mut constants: Vec<ConstantsValue> = vec![];
-//     compile_expression(expression, &mut code, &mut constants);
-//     BytecodeChunk::new(code, constants)
-// }
 
 pub fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
@@ -118,58 +146,57 @@ pub fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     for expression in expressions {
         compile_expression(expression, &mut code, &mut constants);
     }
+    code.push(Op::DebugEnd.into());
     BytecodeChunk::new(code, constants)
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::vm::{StackValue, VM};
+    use std::vec;
+
+    use crate::{
+        static_stack::StaticStack,
+        vm::{StackValue, VM},
+    };
 
     use super::*;
 
     #[test]
     fn test_compile_0() {
-        let expression = SimpleExpression::OpCall {
-            op: Op::Add,
-            args: Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(5)),
-                SimpleExpression::Constant(ConstantsValue::Integer(6)),
-            )),
-        };
+        let expression = SimpleExpression::Add(Box::new((
+            SimpleExpression::Constant(ConstantsValue::Integer(5)),
+            SimpleExpression::Constant(ConstantsValue::Integer(6)),
+        )));
         let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
-            vec![Op::Constant.into(), 0, Op::Constant.into(), 1, Op::Add.into(),]
+            vec![
+                Op::Constant.into(),
+                0,
+                Op::Constant.into(),
+                1,
+                Op::Add.into(),
+                Op::DebugEnd.into(),
+            ]
         );
-        assert_eq!(bc.constants, vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)]);
-
-        // let mut vm = VM::default();
-        // vm.run(bc);
-        // println!("{:?}", vm.stack);
+        assert_eq!(
+            bc.constants,
+            vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)]
+        );
     }
 
     #[test]
     fn test_compile_compound() {
-        let expression = SimpleExpression::OpCall {
-            op: Op::Add,
-            args: Box::new((
-                SimpleExpression::OpCall {
-                    op: Op::Add,
-                    args: Box::new((
-                        SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                        SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                    )),
-                },
-                SimpleExpression::OpCall {
-                    op: Op::Add,
-                    args: Box::new((
-                        SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                        SimpleExpression::Constant(ConstantsValue::Integer(14)),
-                    )),
-                },
-            )),
-        };
+        let expression = SimpleExpression::Add(Box::new((
+            SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            ))),
+            SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(13)),
+                SimpleExpression::Constant(ConstantsValue::Integer(14)),
+            ))),
+        )));
         let bc = compile_program(vec![expression]);
         assert_eq!(
             bc.code,
@@ -185,6 +212,7 @@ mod tests {
                 3,
                 Op::Add.into(),
                 Op::Add.into(),
+                Op::DebugEnd.into(),
             ]
         );
         assert_eq!(
@@ -196,11 +224,6 @@ mod tests {
                 ConstantsValue::Integer(14),
             ]
         );
-
-        // let mut vm = VM::default();
-        // vm.load(code);
-        // vm.run();
-        // println!("{:?}", vm.stack);
     }
 
     #[test]
@@ -224,43 +247,39 @@ mod tests {
                 3,
                 Op::Constant.into(),
                 2,
+                Op::DebugEnd.into(),
             ]
         );
         assert_eq!(
             bc.constants,
-            vec![ConstantsValue::Integer(11), ConstantsValue::Integer(13), ConstantsValue::Integer(12)]
+            vec![
+                ConstantsValue::Integer(11),
+                ConstantsValue::Integer(13),
+                ConstantsValue::Integer(12)
+            ]
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, vec![StackValue::Integer(12)])
+        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(12)]))
     }
 
     #[test]
     fn test_if_complex() {
         let expression = SimpleExpression::If {
-            condition: Box::new(SimpleExpression::OpCall {
-                op: Op::Add,
-                args: Box::new((
-                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                )),
-            }),
-            then: Box::new(SimpleExpression::OpCall {
-                op: Op::Add,
-                args: Box::new((
-                    SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(14)),
-                )),
-            }),
-            else_: Box::new(SimpleExpression::OpCall {
-                op: Op::Add,
-                args: Box::new((
-                    SimpleExpression::Constant(ConstantsValue::Integer(15)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(16)),
-                )),
-            }),
+            condition: Box::new(SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            )))),
+            then: Box::new(SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(13)),
+                SimpleExpression::Constant(ConstantsValue::Integer(14)),
+            )))),
+            else_: Box::new(SimpleExpression::Add(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(15)),
+                SimpleExpression::Constant(ConstantsValue::Integer(16)),
+            )))),
         };
         let bc = compile_program(vec![expression]);
         assert_eq!(
@@ -286,6 +305,7 @@ mod tests {
                 5,
                 Op::Add.into(),
                 // idx 19
+                Op::DebugEnd.into(),
             ]
         );
         assert_eq!(
@@ -299,11 +319,6 @@ mod tests {
                 ConstantsValue::Integer(14),
             ]
         );
-
-        // NOTE: This test shouldn't be here but good for easy testing
-        let mut vm = VM::default();
-        vm.run(bc);
-        assert_eq!(vm.stack, vec![StackValue::Integer(27)])
     }
 
     #[test]
@@ -320,6 +335,7 @@ mod tests {
                 0,
                 Op::DeclareGlobal.into(),
                 1,
+                Op::DebugEnd.into(),
             ]
         );
         assert_eq!(
@@ -341,17 +357,14 @@ mod tests {
         let program = vec![
             SimpleExpression::DeclareGlobal {
                 name: "foo".to_string(),
-                value: Box::new(SimpleExpression::OpCall {
-                    op: Op::Add,
-                    args: Box::new((
-                        SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                        SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                    )),
-                }),
+                value: Box::new(SimpleExpression::Add(Box::new((
+                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                )))),
             },
             SimpleExpression::Symbol("foo".to_string()),
         ];
-        
+
         let bc = compile_program(program);
 
         assert_eq!(
@@ -373,8 +386,9 @@ mod tests {
                 Op::Add.into(),
                 Op::DeclareGlobal.into(),
                 2,
-                Op::Reference.into(),
+                Op::ReferenceGlobal.into(),
                 2,
+                Op::DebugEnd.into(),
             ]
         );
 
@@ -382,36 +396,140 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(23)));
-        assert_eq!(vm.stack, vec![StackValue::Integer(23)])
+        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(23)]))
     }
 
     #[test]
-    fn e2e() {
-        let program = vec![
-            SimpleExpression::DeclareGlobal {
-                name: "foo".to_string(),
-                value: Box::new(SimpleExpression::OpCall {
-                    op: Op::Add,
-                    args: Box::new((
-                        SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                        SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                    )),
-                }),
+    fn test_call_function() {
+        let mut code: Vec<u8> = vec![];
+        let mut constants: Vec<ConstantsValue> = vec![ConstantsValue::Object(
+            ObjectValue::Function(Function::new(
+                "add".to_string(),
+                2,
+                BytecodeChunk::new(
+                    vec![
+                        Op::ReferenceLocal.into(),
+                        1,
+                        Op::ReferenceLocal.into(),
+                        2,
+                        Op::Add.into(),
+                        Op::Return.into(),
+                    ],
+                    vec![],
+                ),
+            )),
+        )];
+        compile_expression(
+            SimpleExpression::FunctionCall {
+                name: "add".to_string(),
+                args: vec![
+                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                ],
             },
-            SimpleExpression::DebugPrint(Box::new(SimpleExpression::If {
-                condition: Box::new(SimpleExpression::Symbol("foo".to_string())),
-                then: Box::new(SimpleExpression::Constant(ConstantsValue::Object(ObjectValue::String("true".to_string())))),
-                else_: Box::new(SimpleExpression::Constant(ConstantsValue::Object(ObjectValue::String("false".to_string())))),
-            })),
-        ];
+            &mut code,
+            &mut constants,
+        );
+        code.push(Op::DebugEnd.into());
 
-        let bc = compile_program(program);
+        assert_eq!(
+            code,
+            vec![
+                Op::Constant.into(),
+                0, // load function
+                Op::Constant.into(),
+                1, // load arg 1
+                Op::Constant.into(),
+                2, // load arg 2
+                Op::FuncCall.into(),
+                2, // call function with arity 2
+                Op::DebugEnd.into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_function_with_computed_arguments() {
+        let mut code: Vec<u8> = vec![];
+        let mut constants: Vec<ConstantsValue> = vec![ConstantsValue::Object(
+            ObjectValue::Function(Function::new(
+                "add".to_string(),
+                2,
+                BytecodeChunk::new(
+                    vec![
+                        Op::ReferenceLocal.into(),
+                        1,
+                        Op::ReferenceLocal.into(),
+                        2,
+                        Op::Add.into(),
+                        Op::Return.into(),
+                    ],
+                    vec![],
+                ),
+            )),
+        )];
+        compile_expression(
+            SimpleExpression::FunctionCall {
+                name: "add".to_string(),
+                args: vec![
+                    SimpleExpression::FunctionCall {
+                        name: "add".to_string(),
+                        args: vec![
+                            SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                            SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                        ],
+                    },
+                    SimpleExpression::Mul(Box::new((
+                        SimpleExpression::Constant(ConstantsValue::Integer(13)),
+                        SimpleExpression::Constant(ConstantsValue::Integer(14)),
+                    ))),
+                ],
+            },
+            &mut code,
+            &mut constants,
+        );
+
+        code.push(Op::DebugEnd.into());
+
+        assert_eq!(
+            constants[1..],
+            vec![
+                ConstantsValue::Integer(11),
+                ConstantsValue::Integer(12),
+                ConstantsValue::Integer(13),
+                ConstantsValue::Integer(14),
+            ]
+        );
+
+        assert_eq!(
+            code,
+            vec![
+                Op::Constant.into(),
+                0, // load function (outer)
+                Op::Constant.into(),
+                0, // load function (inner)
+                // args for inner function
+                Op::Constant.into(),
+                1, // load arg 1 "11"
+                Op::Constant.into(),
+                2, // load arg 2 "12"
+                Op::FuncCall.into(),
+                2, // call inner function with arity 2
+                // next arg for outer function
+                Op::Constant.into(),
+                3, // load arg to Mul "13"
+                Op::Constant.into(),
+                4, // load arg to Mul "14"
+                Op::Mul.into(),
+                Op::FuncCall.into(),
+                2, // call function "add" (outer) with arity 2
+                Op::DebugEnd.into(),
+            ]
+        );
 
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
-        vm.run(bc);
-        println!("\n\n");
-        println!("{:?}", vm.stack);
-        println!("{:?}", vm.globals);
+        vm.run(BytecodeChunk { code, constants });
+        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(205)]));
     }
 }

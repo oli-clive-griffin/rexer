@@ -5,6 +5,7 @@ mod lexer;
 mod parser;
 mod sexpr;
 mod vm;
+mod static_stack;
 
 use std::io::Write;
 
