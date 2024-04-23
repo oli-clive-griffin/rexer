@@ -4,7 +4,7 @@ use rusp::{
 };
 
 #[test]
-fn compiler() {
+fn e2e_1() {
     let program = vec![
         SimpleExpression::DeclareGlobal {
             name: "foo".to_string(),
@@ -26,10 +26,52 @@ fn compiler() {
 
     let bc = compile_program(program);
 
-    // NOTE: This test shouldn't be here but good for easy testing
     let mut vm = VM::default();
     vm.run(bc);
-    println!("\n\n");
-    println!("{:?}", vm.stack);
-    println!("{:?}", vm.globals);
+    println!("\n\nTEST:");
+    println!("stack: {}", vm.stack);
+    println!("globals: {:?}", vm.globals);
+}
+
+#[test]
+fn e2e_2() {
+    let program = vec![SimpleExpression::RegularForm {
+        car: Box::new(SimpleExpression::If {
+            condition: Box::new(SimpleExpression::Constant(ConstantsValue::Boolean(true))),
+            then: Box::new(SimpleExpression::Symbol("*".to_string())),
+            else_: Box::new(SimpleExpression::Symbol("+".to_string())),
+        }),
+        cdr: vec![
+            SimpleExpression::Constant(ConstantsValue::Integer(2)),
+            SimpleExpression::Constant(ConstantsValue::Integer(3)),
+        ],
+    }];
+
+    let bc = compile_program(program);
+
+    let mut vm = VM::default();
+
+    vm.run(bc);
+    println!("\n\nTEST:");
+    println!("stack: {}", vm.stack);
+    println!("globals: {:?}", vm.globals);
+}
+
+#[test]
+#[should_panic(expected = "Runtime error: arity mismatch: Expected 2 arguments, got 3")]
+fn e2e_3() {
+    let program = vec![SimpleExpression::RegularForm {
+        car: Box::new(SimpleExpression::Symbol("*".to_string())),
+        cdr: vec![
+            SimpleExpression::Constant(ConstantsValue::Integer(2)),
+            SimpleExpression::Constant(ConstantsValue::Integer(3)),
+            SimpleExpression::Constant(ConstantsValue::Integer(4)),
+        ],
+    }];
+
+    let bc = compile_program(program);
+
+    let mut vm = VM::default();
+
+    vm.run(bc);
 }

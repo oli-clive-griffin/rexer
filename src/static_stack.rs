@@ -1,13 +1,12 @@
 use std::fmt::Display;
 
-
 #[derive(Debug)]
-pub struct StaticStack<T, const N: usize> {
-    stack: [T; N],
-    pub ptr: i32,
+pub struct StaticStack<T, const MAX: usize> {
+    stack: [T; MAX],
+    pub ptr: i32, // needs to be i to allow -1
 }
 
-impl <T : PartialEq, const N: usize> PartialEq for StaticStack<T, N> {
+impl<T: PartialEq, const MAX: usize> PartialEq for StaticStack<T, MAX> {
     fn eq(&self, other: &Self) -> bool {
         if self.ptr != other.ptr {
             return false;
@@ -21,10 +20,16 @@ impl <T : PartialEq, const N: usize> PartialEq for StaticStack<T, N> {
     }
 }
 
-impl <T : Display, const N: usize> Display for StaticStack<T, N> {
+impl<T: Display, const MAX: usize> Display for StaticStack<T, MAX> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::from("[");
-        for i in 0..self.ptr as usize {
+        println!("ptr: {}", self.ptr);
+        let max = if self.ptr < 0 {
+            return write!(f, "[]");
+        } else {
+            self.ptr as usize
+        };
+        for i in 0..max {
             s.push_str(&format!("{}, ", self.stack[i]));
         }
         s.push_str(&format!("{}", self.stack[self.ptr as usize]));
@@ -33,8 +38,8 @@ impl <T : Display, const N: usize> Display for StaticStack<T, N> {
     }
 }
 
-impl <T : Default + Copy, const N: usize> StaticStack<T, N> {
-    pub fn from(values: Vec<T>) -> Self {
+impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
+    pub fn from<const N: usize>(values: [T; N]) -> Self {
         let mut stack = Self::new();
         for value in values {
             stack.push(value);
@@ -44,7 +49,7 @@ impl <T : Default + Copy, const N: usize> StaticStack<T, N> {
 
     pub fn new() -> Self {
         Self {
-            stack: [Default::default(); N],
+            stack: [Default::default(); MAX],
             ptr: -1,
         }
     }

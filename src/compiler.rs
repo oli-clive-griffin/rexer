@@ -11,9 +11,10 @@ pub enum SimpleExpression {
     Mul(Box<(SimpleExpression, SimpleExpression)>),
     Sub(Box<(SimpleExpression, SimpleExpression)>),
     Div(Box<(SimpleExpression, SimpleExpression)>),
-    FunctionCall {
-        name: String,
-        args: Vec<SimpleExpression>,
+    Quote(Box<SimpleExpression>),
+    RegularForm {
+        car: Box<SimpleExpression>,
+        cdr: Vec<SimpleExpression>,
     },
     If {
         condition: Box<SimpleExpression>,
@@ -99,43 +100,44 @@ fn compile_expression(
         }
         SimpleExpression::Symbol(symbol) => {
             code.push(Op::ReferenceGlobal.into());
-            let constant_idx = constants
-                .iter()
-                .position(|x| match x {
-                    ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
-                    _ => false,
-                })
-                .expect("Symbol not found in constants");
-            code.push(constant_idx as u8);
+            constants.push(ConstantsValue::Object(ObjectValue::String(symbol)));
+            code.push(constants.len() as u8 - 1);
+
+            // let constant_idx = constants
+            //     .iter()
+            //     .position(|x| match x {
+            //         ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
+            //         _ => false,
+            //     });
+
+            // if let Some(idx) = constant_idx {
+            //     code.push(Op::ReferenceGlobal.into());
+            //     code.push(idx as u8);
+            //     return;
+            // }
+            // todo!("local variable lookup not implemented")
         }
         SimpleExpression::DebugPrint(expr) => {
             compile_expression(*expr, code, constants);
             code.push(Op::DebugPrint.into());
         }
-        SimpleExpression::FunctionCall { name, args } => {
-            // todo this is shit but fine for now
-            let function_constants_idx = constants
-                .iter()
-                .position(|x| match x {
-                    ConstantsValue::Object(ObjectValue::Function(Function { name: n, .. })) => {
-                        n == &name
-                    }
-                    _ => false,
-                })
-                .expect("Symbol not found in constants");
-            code.push(Op::Constant.into());
-            code.push(function_constants_idx as u8);
-
-            let arity = args.len();
+        SimpleExpression::RegularForm { car, cdr } => {
+            // put given arity
+            // We don't know the arity of the function at compile-time so we
+            // defensively put the number of arguments to check at runtime
+            let arity = cdr.len();
             let arity = if arity > 255 { panic!() } else { arity as u8 };
 
-            for arg in args {
-                compile_expression(arg, code, constants);
+            compile_expression(*car, code, constants);
+            for expr in cdr {
+                compile_expression(expr, code, constants);
             }
 
-            // finally, put the func-call op code, whose operand is the arity
             code.push(Op::FuncCall.into());
-            code.push(arity)
+            code.push(arity);
+        }
+        SimpleExpression::Quote(sexpr) => {
+            todo!()
         }
     }
 }
@@ -262,7 +264,7 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(12)]))
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(12)]))
     }
 
     #[test]
@@ -373,6 +375,7 @@ mod tests {
                 ConstantsValue::Integer(11),
                 ConstantsValue::Integer(12),
                 ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
             ]
         );
 
@@ -387,7 +390,7 @@ mod tests {
                 Op::DeclareGlobal.into(),
                 2,
                 Op::ReferenceGlobal.into(),
-                2,
+                3,
                 Op::DebugEnd.into(),
             ]
         );
@@ -396,47 +399,33 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(23)));
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(23)]))
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(23)]))
     }
 
     #[test]
     fn test_call_function() {
-        let mut code: Vec<u8> = vec![];
-        let mut constants: Vec<ConstantsValue> = vec![ConstantsValue::Object(
-            ObjectValue::Function(Function::new(
-                "add".to_string(),
-                2,
-                BytecodeChunk::new(
-                    vec![
-                        Op::ReferenceLocal.into(),
-                        1,
-                        Op::ReferenceLocal.into(),
-                        2,
-                        Op::Add.into(),
-                        Op::Return.into(),
-                    ],
-                    vec![],
-                ),
-            )),
-        )];
-        compile_expression(
-            SimpleExpression::FunctionCall {
-                name: "add".to_string(),
-                args: vec![
-                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                ],
-            },
-            &mut code,
-            &mut constants,
-        );
-        code.push(Op::DebugEnd.into());
+        let bc = compile_program(vec![SimpleExpression::RegularForm {
+            car: SimpleExpression::Symbol("*".to_string()).into(),
+            cdr: vec![
+                SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            ],
+        }]);
 
         assert_eq!(
-            code,
+            bc.constants,
             vec![
-                Op::Constant.into(),
-                0, // load function
+                ConstantsValue::Object(ObjectValue::String("*".to_string())),
+                ConstantsValue::Integer(11),
+                ConstantsValue::Integer(12),
+            ],
+        );
+
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::ReferenceGlobal.into(),
+                0, // load function symbol
                 Op::Constant.into(),
                 1, // load arg 1
                 Op::Constant.into(),
@@ -450,31 +439,13 @@ mod tests {
 
     #[test]
     fn test_function_with_computed_arguments() {
-        let mut code: Vec<u8> = vec![];
-        let mut constants: Vec<ConstantsValue> = vec![ConstantsValue::Object(
-            ObjectValue::Function(Function::new(
-                "add".to_string(),
-                2,
-                BytecodeChunk::new(
-                    vec![
-                        Op::ReferenceLocal.into(),
-                        1,
-                        Op::ReferenceLocal.into(),
-                        2,
-                        Op::Add.into(),
-                        Op::Return.into(),
-                    ],
-                    vec![],
-                ),
-            )),
-        )];
-        compile_expression(
-            SimpleExpression::FunctionCall {
-                name: "add".to_string(),
-                args: vec![
-                    SimpleExpression::FunctionCall {
-                        name: "add".to_string(),
-                        args: vec![
+        let bc = compile_program(vec![
+            SimpleExpression::RegularForm {
+                car: Box::new(SimpleExpression::Symbol("+".to_string())),
+                cdr: vec![
+                    SimpleExpression::RegularForm {
+                        car: Box::new(SimpleExpression::Symbol("+".to_string())),
+                        cdr: vec![
                             SimpleExpression::Constant(ConstantsValue::Integer(11)),
                             SimpleExpression::Constant(ConstantsValue::Integer(12)),
                         ],
@@ -485,15 +456,13 @@ mod tests {
                     ))),
                 ],
             },
-            &mut code,
-            &mut constants,
-        );
-
-        code.push(Op::DebugEnd.into());
+        ]);
 
         assert_eq!(
-            constants[1..],
+            bc.constants,
             vec![
+                ConstantsValue::Object(ObjectValue::String("+".to_string())),
+                ConstantsValue::Object(ObjectValue::String("+".to_string())),
                 ConstantsValue::Integer(11),
                 ConstantsValue::Integer(12),
                 ConstantsValue::Integer(13),
@@ -502,24 +471,28 @@ mod tests {
         );
 
         assert_eq!(
-            code,
+            bc.code,
             vec![
+                Op::ReferenceGlobal.into(),
+                0, // reference function symbol (outer)
+                //
+                // arg 1 (outer)
+                Op::ReferenceGlobal.into(),
+                1, // reference function symbol (inner)
+                // arg 1 (inner)
                 Op::Constant.into(),
-                0, // load function (outer)
+                2, // load arg 1 "11"
+                // arg 2 (inner)
                 Op::Constant.into(),
-                0, // load function (inner)
-                // args for inner function
-                Op::Constant.into(),
-                1, // load arg 1 "11"
-                Op::Constant.into(),
-                2, // load arg 2 "12"
+                3, // load arg 2 "12"
                 Op::FuncCall.into(),
                 2, // call inner function with arity 2
-                // next arg for outer function
+                //
+                // arg 2 (outer)
                 Op::Constant.into(),
-                3, // load arg to Mul "13"
+                4, // load arg to Mul "13"
                 Op::Constant.into(),
-                4, // load arg to Mul "14"
+                5, // load arg to Mul "14"
                 Op::Mul.into(),
                 Op::FuncCall.into(),
                 2, // call function "add" (outer) with arity 2
@@ -529,7 +502,7 @@ mod tests {
 
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
-        vm.run(BytecodeChunk { code, constants });
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(205)]));
+        vm.run(bc);
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(205)]));
     }
 }

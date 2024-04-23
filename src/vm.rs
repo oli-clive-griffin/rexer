@@ -8,6 +8,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::alloc::{alloc, dealloc, Layout};
 use std::collections::HashMap;
 use std::default;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::panic::PanicInfo;
@@ -30,6 +31,17 @@ pub struct VM {
 pub enum ObjectValue {
     String(String),
     Function(Function),
+    Symbol(String),
+}
+
+impl Display for ObjectValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ObjectValue::String(s) => write!(f, "{}", s),
+            ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
+            ObjectValue::Symbol(s) => write!(f, ":{}", s),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +67,12 @@ pub struct HeapObject {
     // marked: bool,
 }
 
+impl Display for HeapObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StackValue {
     Integer(i64),
@@ -62,6 +80,18 @@ pub enum StackValue {
     Boolean(bool),
     Nil,
     Object(*mut HeapObject),
+}
+
+impl Display for StackValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StackValue::Integer(i) => write!(f, "{}", i),
+            StackValue::Float(fl) => write!(f, "{}", fl),
+            StackValue::Boolean(b) => write!(f, "{}", b),
+            StackValue::Nil => write!(f, "nil"),
+            StackValue::Object(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
+        }
+    }
 }
 
 impl default::Default for StackValue {
@@ -138,14 +168,55 @@ impl Default for VM {
 
 impl VM {
     pub fn new() -> VM {
-        VM {
+        let mut vm = VM {
             ip: std::ptr::null_mut(),
             stack: StaticStack::new(),
             heap: std::ptr::null_mut(),
             globals: HashMap::default(),
             callframes: Vec::default(),
             current_chunk: BytecodeChunk::new(vec![], vec![]),
-        }
+        };
+
+        let mul = unsafe {
+            vm.allocate_value(ObjectValue::Function(Function {
+                name: "*".to_string(),
+                arity: 2,
+                bytecode: Box::new(BytecodeChunk {
+                    code: vec![
+                        Op::ReferenceLocal.into(),
+                        1,
+                        Op::ReferenceLocal.into(),
+                        2,
+                        Op::Mul.into(),
+                        Op::Return.into(),
+                    ],
+                    constants: vec![],
+                }),
+            }))
+        };
+
+        let add = unsafe {
+            vm.allocate_value(ObjectValue::Function(Function {
+                name: "+".to_string(),
+                arity: 2,
+                bytecode: Box::new(BytecodeChunk {
+                    code: vec![
+                        Op::ReferenceLocal.into(),
+                        1,
+                        Op::ReferenceLocal.into(),
+                        2,
+                        Op::Add.into(),
+                        Op::Return.into(),
+                    ],
+                    constants: vec![],
+                }),
+            }))
+        };
+
+        vm.globals.insert("*".to_string(), StackValue::Object(mul));
+        vm.globals.insert("+".to_string(), StackValue::Object(add));
+
+        vm
     }
 
     // pub fn load(&mut self, chunk: BytecodeChunk) {
@@ -213,27 +284,39 @@ impl VM {
         // expects the stack to be:
         // [..., function, arg1, arg2, ... argN]
         // and the operand to be the arity of the function, so we can lookup the function and args
-        let arity = self.consume_next_byte_as_byte();
-        let func_obj = match self.stack.peek_back(arity as usize).unwrap() {
+        let given_arity = self.consume_next_byte_as_byte();
+
+        let func_obj = match self.stack.peek_back(given_arity as usize).unwrap() {
             StackValue::Object(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(f) => f,
-                _ => panic!("expected function"),
+                _ => panic!("expected ObjectValue::Function"),
             },
-            _ => panic!("expected function"),
+            _ => panic!("expected StackValue::Object"),
         };
-        self.callframes.push(CallFrame {
+
+        if func_obj.arity != given_arity as usize {
+            self.runtime_error(
+                format!("arity mismatch: Expected {} arguments, got {}", func_obj.arity, given_arity).as_str(),
+            )
+        }
+
+        self.callframes.push(self.make_callframe(func_obj));
+        self.ip = func_obj.bytecode.code.as_ptr();
+    }
+
+    fn make_callframe(&self, func_obj: &Function) -> CallFrame {
+        CallFrame {
             return_address: self.ip,
             stack_frame_start: {
-                let ptr = self.stack.ptr - arity as i32; // todo CHECK
+                let ptr = self.stack.ptr - func_obj.arity as i32; // todo CHECK
                 if ptr < 0 {
                     panic!();
                 } else {
                     ptr as usize
                 }
             },
-            arity: arity as usize,
-        });
-        self.ip = func_obj.bytecode.code.as_ptr();
+            arity: func_obj.arity as usize,
+        }
     }
 
     fn handle_print(&mut self) {
@@ -241,6 +324,7 @@ impl VM {
             StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s.clone(),
                 ObjectValue::Function(f) => "function".to_string(),
+                ObjectValue::Symbol(sym) => format!(":{}", sym),
             },
             StackValue::Integer(i) => i.to_string(),
             StackValue::Float(f) => f.to_string(),
@@ -305,7 +389,7 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (StackValue::Integer(a), StackValue::Integer(b)) => StackValue::Integer(a * b),
-            _ => todo!(),
+            other => todo!("not implemented for {:?}", other),
         });
         self.advance();
     }
@@ -413,6 +497,10 @@ impl VM {
         obj_ptr
     }
 
+    fn runtime_error(&self, message: &str) {
+        panic!("Runtime error: {}", message);
+        // std::process::exit(1);
+    }
     // unsafe fn allocate<T>(obj: T) -> *mut T {
     //     let obj_ptr = alloc(Layout::new::<T>()) as *mut T;
     //     obj_ptr.write(obj);
@@ -432,7 +520,7 @@ mod tests {
             constants: vec![ConstantsValue::Integer(5)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(5)]));
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(5)]));
     }
 
     #[test]
@@ -481,7 +569,7 @@ mod tests {
                 ConstantsValue::Integer(2),
             ],
         });
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(2)]));
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(2)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) }); // idx after the last byte
     }
 
@@ -511,7 +599,7 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(3)]));
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(3)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 
@@ -593,9 +681,10 @@ mod tests {
         let ptr = chunk.code.as_ptr();
 
         let mut vm = VM::default();
+        let num_globals_before = vm.globals.len();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 0);
-        assert_eq!(vm.globals.len(), 1);
+        assert_eq!(vm.globals.len(), num_globals_before + 1);
         assert_eq!(vm.globals.get("foo").unwrap(), &StackValue::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(4) });
     }
@@ -667,29 +756,53 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from(vec![StackValue::Integer(50)]));
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(50)]));
+    }
+
+    #[test]
+    fn test_advanced() {
+        let bc = BytecodeChunk {
+            code: vec![
+                Op::Constant.into(),
+                0, // load the function
+                Op::Constant.into(),
+                1, // load the argument 20
+                Op::Constant.into(),
+                2, // load the argument 30
+                Op::FuncCall.into(),
+                2, // call the function with 2 arguments
+                Op::DebugEnd.into(),
+            ],
+            constants: vec![
+                ConstantsValue::Object(ObjectValue::Function(
+                    Function {
+                        name: "asdf".to_string(),
+                        arity: 2,
+                        bytecode: Box::new(BytecodeChunk {
+                            code: vec![
+                                Op::ReferenceLocal.into(),
+                                // make variables 1-indexed as the function itself is at 0 (maybe? (bad idea? (probably)))
+                                1, // load the first argument from back in the stack
+                                Op::ReferenceLocal.into(),
+                                2, // load the second argument from back in the stack
+                                Op::Add.into(),
+                                Op::Return.into(),
+                            ],
+                            constants: vec![],
+                        }),
+                    }, // )
+                )),
+                ConstantsValue::Integer(20),
+                ConstantsValue::Integer(30),
+            ],
+        };
+
+        let mut vm = VM::default();
+        vm.run(bc);
+        assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(50));
+        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(50)]));
     }
 }
-
-// let name = match self.consume_next_byte_as_constant(&chunk) {
-//     StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
-//         ObjectValue::String(s) => s,
-//         _ => panic!("expected string value for reference"),
-//     },
-//     _ => panic!("expected string value for reference"),
-// };
-
-// let name = get_obejct(self, &chunk, String);
-// not needed for now
-// // #[repr(C)] // for the struct definition
-// impl StackValue {
-//     fn from_bytes(bytes: [u8; 16]) -> Self {
-//         unsafe { mem::transmute(bytes) }
-//     }
-//     fn to_bytes(self) -> [u8; 16] {
-//         unsafe { mem::transmute(self) }
-//     }
-// }
 
 // fn print_heap(head_: *mut HeapObject) {
 //     unsafe {
