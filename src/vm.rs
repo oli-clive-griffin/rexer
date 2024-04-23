@@ -8,7 +8,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::alloc::{alloc, dealloc, Layout};
 use std::collections::HashMap;
 use std::default;
-use std::fmt::Display;
+use std::fmt::{format, Display};
 use std::hash::Hash;
 use std::ops::Deref;
 use std::panic::PanicInfo;
@@ -20,8 +20,8 @@ use std::panic::PanicInfo;
 const STACK_SIZE: usize = 4096;
 pub struct VM {
     ip: *const u8,
-    pub stack: StaticStack<StackValue, STACK_SIZE>,
-    pub globals: HashMap<String, StackValue>,
+    pub stack: StaticStack<SmallValue, STACK_SIZE>,
+    pub globals: HashMap<String, SmallValue>,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
     current_chunk: BytecodeChunk,
@@ -29,9 +29,20 @@ pub struct VM {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectValue {
+    SmallValue(SmallValue),
     String(String),
     Function(Function),
     Symbol(String),
+    ConsCell(Box<ConsCell>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsCell(*mut HeapObject, *mut ConsCell);
+
+impl Display for ConsCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({} . {})", &unsafe { &*self.0 }, &unsafe { &*self.1 })
+    }
 }
 
 impl Display for ObjectValue {
@@ -40,6 +51,8 @@ impl Display for ObjectValue {
             ObjectValue::String(s) => write!(f, "{}", s),
             ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
             ObjectValue::Symbol(s) => write!(f, ":{}", s),
+            ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
+            ObjectValue::SmallValue(v) => write!(f, "{}", v),
         }
     }
 }
@@ -74,7 +87,7 @@ impl Display for HeapObject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StackValue {
+pub enum SmallValue {
     Integer(i64),
     Float(f64),
     Boolean(bool),
@@ -82,21 +95,21 @@ pub enum StackValue {
     Object(*mut HeapObject),
 }
 
-impl Display for StackValue {
+impl Display for SmallValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StackValue::Integer(i) => write!(f, "{}", i),
-            StackValue::Float(fl) => write!(f, "{}", fl),
-            StackValue::Boolean(b) => write!(f, "{}", b),
-            StackValue::Nil => write!(f, "nil"),
-            StackValue::Object(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
+            SmallValue::Integer(i) => write!(f, "{}", i),
+            SmallValue::Float(fl) => write!(f, "{}", fl),
+            SmallValue::Boolean(b) => write!(f, "{}", b),
+            SmallValue::Nil => write!(f, "nil"),
+            SmallValue::Object(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
         }
     }
 }
 
-impl default::Default for StackValue {
+impl default::Default for SmallValue {
     fn default() -> Self {
-        StackValue::Integer(69) // flag for debugging
+        SmallValue::Integer(69) // flag for debugging
     }
 }
 
@@ -116,14 +129,14 @@ pub enum ConstantsValue {
     Object(ObjectValue),
 }
 
-impl StackValue {
+impl SmallValue {
     fn truthy(&self) -> bool {
         match self {
-            StackValue::Integer(i) => *i != 0,
-            StackValue::Float(f) => *f != 0.0,
-            StackValue::Boolean(b) => *b,
-            StackValue::Nil => false,
-            StackValue::Object(_) => false,
+            SmallValue::Integer(i) => *i != 0,
+            SmallValue::Float(f) => *f != 0.0,
+            SmallValue::Boolean(b) => *b,
+            SmallValue::Nil => false,
+            SmallValue::Object(_) => false,
         }
     }
 }
@@ -156,6 +169,10 @@ pub enum Op {
     DeclareGlobal = 10,
     ReferenceGlobal = 11,
     ReferenceLocal = 12,
+
+    // testing
+    Cons = 13,
+
     DebugEnd = 254,   // ends the program
     DebugPrint = 255, // prints the stack
 }
@@ -213,17 +230,12 @@ impl VM {
             }))
         };
 
-        vm.globals.insert("*".to_string(), StackValue::Object(mul));
-        vm.globals.insert("+".to_string(), StackValue::Object(add));
+        vm.globals.insert("*".to_string(), SmallValue::Object(mul));
+        vm.globals.insert("+".to_string(), SmallValue::Object(add));
 
         vm
     }
 
-    // pub fn load(&mut self, chunk: BytecodeChunk) {
-    //     self.current_chunk = chunk;
-    // }
-
-    // pub fn run(&mut self) {
     pub fn run(&mut self, chunk: BytecodeChunk) {
         self.ip = chunk.code.as_ptr();
         self.current_chunk = chunk;
@@ -242,11 +254,40 @@ impl VM {
                 Op::ReferenceGlobal => self.handle_reference_global(),
                 Op::DebugPrint => self.handle_print(),
                 Op::FuncCall => self.handle_func_call(),
+                Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
                 Op::DebugEnd => return,
             }
         }
+    }
+
+    // the following are all in the wrong order and I don't care
+
+    fn handle_cons(&mut self) {
+        let val = self.stack.pop().unwrap();
+        // this is trippy, soooo, I've made `ObjectValue::SmallValue` a heap-allocated value (that's usually on the stack)
+        let ptr = unsafe {
+            // let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
+            // obj_ptr.write(HeapObject {
+            //     next: self.heap,
+            //     value: obj_value,
+            // });
+            // self.heap = obj_ptr;
+            // obj_ptr
+            //
+            let heap_val = self.allocate_value(ObjectValue::SmallValue(val));
+
+            self.allocate_value(ObjectValue::ConsCell(Box::new(ConsCell(
+                heap_val,
+                std::ptr::null_mut(),
+            ))))
+        };
+        // when we get it's pointer, we can just store it back on the stack inside a `SmallValue::Object`
+        // so this is a value containing a pointer to a value that's on the heap
+        // SmallValue::Object(*mut HeapObject::ObjectValue::SmallValue(val))
+        self.stack.push(SmallValue::Object(ptr));
+        self.advance()
     }
 
     fn handle_return(&mut self) {
@@ -287,7 +328,7 @@ impl VM {
         let given_arity = self.consume_next_byte_as_byte();
 
         let func_obj = match self.stack.peek_back(given_arity as usize).unwrap() {
-            StackValue::Object(obj) => match &unsafe { &*obj }.value {
+            SmallValue::Object(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(f) => f,
                 _ => panic!("expected ObjectValue::Function"),
             },
@@ -296,7 +337,11 @@ impl VM {
 
         if func_obj.arity != given_arity as usize {
             self.runtime_error(
-                format!("arity mismatch: Expected {} arguments, got {}", func_obj.arity, given_arity).as_str(),
+                format!(
+                    "arity mismatch: Expected {} arguments, got {}",
+                    func_obj.arity, given_arity
+                )
+                .as_str(),
             )
         }
 
@@ -321,15 +366,11 @@ impl VM {
 
     fn handle_print(&mut self) {
         let val = match self.stack.pop().unwrap() {
-            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
-                ObjectValue::String(s) => s.clone(),
-                ObjectValue::Function(f) => "function".to_string(),
-                ObjectValue::Symbol(sym) => format!(":{}", sym),
-            },
-            StackValue::Integer(i) => i.to_string(),
-            StackValue::Float(f) => f.to_string(),
-            StackValue::Boolean(b) => b.to_string(),
-            StackValue::Nil => "nil".to_string(),
+            SmallValue::Object(ptr) => format!("{}", &unsafe { &*ptr }),
+            SmallValue::Integer(i) => i.to_string(),
+            SmallValue::Float(f) => f.to_string(),
+            SmallValue::Boolean(b) => b.to_string(),
+            SmallValue::Nil => "nil".to_string(),
         };
         println!("{:?}", val);
         self.advance();
@@ -338,7 +379,7 @@ impl VM {
     // fn handle_reference_global(&mut self, chunk: &BytecodeChunk) {
     fn handle_reference_global(&mut self) {
         let name = match self.consume_next_byte_as_constant() {
-            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s,
                 _ => panic!("expected string value for reference"),
             },
@@ -354,7 +395,7 @@ impl VM {
         let value = self.stack.pop().unwrap();
         let name = self.consume_next_byte_as_constant();
         match name {
-            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => {
                     self.globals.insert(s.clone(), value);
                 }
@@ -368,7 +409,7 @@ impl VM {
     fn handle_neg(&mut self) {
         let a = self.stack.pop().unwrap();
         self.stack.push(match a {
-            StackValue::Integer(a) => StackValue::Integer(-a),
+            SmallValue::Integer(a) => SmallValue::Integer(-a),
             _ => todo!(),
         });
         self.advance();
@@ -378,7 +419,7 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (StackValue::Integer(a), StackValue::Integer(b)) => StackValue::Integer(a / b),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a / b),
             _ => todo!(),
         });
         self.advance();
@@ -388,7 +429,7 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (StackValue::Integer(a), StackValue::Integer(b)) => StackValue::Integer(a * b),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a * b),
             other => todo!("not implemented for {:?}", other),
         });
         self.advance();
@@ -398,7 +439,7 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (StackValue::Integer(a), StackValue::Integer(b)) => StackValue::Integer(a - b),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a - b),
             _ => todo!(),
         });
         self.advance();
@@ -409,15 +450,15 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         let result = match (a, b) {
-            (StackValue::Integer(a), StackValue::Integer(b)) => StackValue::Integer(a + b),
-            (StackValue::Object(a), StackValue::Object(b)) => {
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a + b),
+            (SmallValue::Object(a), SmallValue::Object(b)) => {
                 match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
                     (ObjectValue::String(a), ObjectValue::String(b)) => {
                         let obj_ptr = unsafe {
                             let obj_value = ObjectValue::String(a.clone() + b);
                             self.allocate_value(obj_value)
                         };
-                        StackValue::Object(obj_ptr)
+                        SmallValue::Object(obj_ptr)
                     }
                     _ => todo!(),
                 }
@@ -455,20 +496,20 @@ impl VM {
     }
 
     // fn consume_next_byte_as_constant(&mut self, chunk: &BytecodeChunk) -> StackValue {
-    fn consume_next_byte_as_constant(&mut self) -> StackValue {
+    fn consume_next_byte_as_constant(&mut self) -> SmallValue {
         unsafe {
             self.ip = self.ip.add(1);
             let constant_idx = *self.ip as usize;
 
             match self.current_chunk.constants[constant_idx].clone() {
                 // IMPORTANT: clone
-                ConstantsValue::Integer(v) => StackValue::Integer(v),
-                ConstantsValue::Float(v) => StackValue::Float(v),
-                ConstantsValue::Boolean(v) => StackValue::Boolean(v),
-                ConstantsValue::Nil => StackValue::Nil,
+                ConstantsValue::Integer(v) => SmallValue::Integer(v),
+                ConstantsValue::Float(v) => SmallValue::Float(v),
+                ConstantsValue::Boolean(v) => SmallValue::Boolean(v),
+                ConstantsValue::Nil => SmallValue::Nil,
                 ConstantsValue::Object(value) => {
                     let obj_ptr = self.allocate_value(value);
-                    StackValue::Object(obj_ptr)
+                    SmallValue::Object(obj_ptr)
                 }
             }
         }
@@ -501,6 +542,17 @@ impl VM {
         panic!("Runtime error: {}", message);
         // std::process::exit(1);
     }
+
+    // fn repl(&mut self) {
+    //     loop {
+    //         let mut input = String::new();
+    //         std::io::stdin().read_line(&mut input).unwrap();
+    //         let opcode: u8 = input.trim().parse().unwrap();
+    //         let op = Op::try_from(opcode).unwrap();
+    //         self.run(chunk)
+    //     }
+    // }
+
     // unsafe fn allocate<T>(obj: T) -> *mut T {
     //     let obj_ptr = alloc(Layout::new::<T>()) as *mut T;
     //     obj_ptr.write(obj);
@@ -520,7 +572,7 @@ mod tests {
             constants: vec![ConstantsValue::Integer(5)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(5)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(5)]));
     }
 
     #[test]
@@ -540,7 +592,7 @@ mod tests {
             constants: vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(11))
+        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(11))
     }
 
     #[test]
@@ -569,7 +621,7 @@ mod tests {
                 ConstantsValue::Integer(2),
             ],
         });
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(2)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(2)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) }); // idx after the last byte
     }
 
@@ -599,7 +651,7 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(3)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(3)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 
@@ -618,7 +670,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -652,7 +704,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            StackValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -685,7 +737,7 @@ mod tests {
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 0);
         assert_eq!(vm.globals.len(), num_globals_before + 1);
-        assert_eq!(vm.globals.get("foo").unwrap(), &StackValue::Integer(5));
+        assert_eq!(vm.globals.get("foo").unwrap(), &SmallValue::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(4) });
     }
 
@@ -711,7 +763,7 @@ mod tests {
         let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(5));
+        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(6) });
     }
 
@@ -755,8 +807,8 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(50)]));
+        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(50));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
     }
 
     #[test]
@@ -799,8 +851,56 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), StackValue::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(50)]));
+        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(50));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
+    }
+
+    // this is so jank but it'll do!
+    #[test]
+    fn test_cons() {
+        let bc = BytecodeChunk {
+            code: vec![Op::Constant.into(), 0, Op::Cons.into(), Op::DebugEnd.into()],
+            constants: vec![ConstantsValue::Integer(30)],
+        };
+
+        let mut vm = VM::default();
+        vm.run(bc);
+        let cell = match vm.stack.peek_top().unwrap() {
+            SmallValue::Object(v) => match &unsafe { &*v }.value {
+                ObjectValue::ConsCell(cell) => cell,
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        assert_eq!(
+            unsafe { &*cell.0 }.value,
+            ObjectValue::SmallValue(SmallValue::Integer(30))
+        );
+        assert_eq!(cell.1, std::ptr::null_mut());
+    }
+
+    #[test]
+    fn test_constructing_cons_list() {
+        let bc = BytecodeChunk {
+            code: vec![Op::Constant.into(), 0, Op::Cons.into(), Op::DebugEnd.into()],
+            constants: vec![ConstantsValue::Integer(30)],
+        };
+
+        let mut vm = VM::default();
+        vm.run(bc);
+        match vm.stack.peek_top().unwrap() {
+            SmallValue::Object(v) => match &unsafe { &*v }.value {
+                ObjectValue::ConsCell(cell) => {
+                    assert_eq!(
+                        unsafe { &*cell.0 }.value,
+                        ObjectValue::SmallValue(SmallValue::Integer(30))
+                    );
+                    assert_eq!(cell.1, std::ptr::null_mut());
+                }
+                asdf => panic!("got {}", asdf),
+            },
+            _ => panic!(),
+        };
     }
 }
 

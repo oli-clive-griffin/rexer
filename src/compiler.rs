@@ -12,10 +12,11 @@ pub enum SimpleExpression {
     Sub(Box<(SimpleExpression, SimpleExpression)>),
     Div(Box<(SimpleExpression, SimpleExpression)>),
     Quote(Box<SimpleExpression>),
-    RegularForm {
-        car: Box<SimpleExpression>,
-        cdr: Vec<SimpleExpression>,
-    },
+    // RegularForm {
+    //     car: Box<SimpleExpression>,
+    //     cdr: Vec<SimpleExpression>,
+    // },
+    RegularForm(Vec<SimpleExpression>),
     If {
         condition: Box<SimpleExpression>,
         then: Box<SimpleExpression>,
@@ -121,24 +122,31 @@ fn compile_expression(
             compile_expression(*expr, code, constants);
             code.push(Op::DebugPrint.into());
         }
-        SimpleExpression::RegularForm { car, cdr } => {
-            // put given arity
+        SimpleExpression::RegularForm(exprs) => {
             // We don't know the arity of the function at compile-time so we
             // defensively put the number of arguments to check at runtime
-            let arity = cdr.len();
+            let arity = exprs.len() - 1;
             let arity = if arity > 255 { panic!() } else { arity as u8 };
 
-            compile_expression(*car, code, constants);
-            for expr in cdr {
+            for expr in exprs {
                 compile_expression(expr, code, constants);
             }
 
             code.push(Op::FuncCall.into());
             code.push(arity);
         }
-        SimpleExpression::Quote(sexpr) => {
-            todo!()
-        }
+        SimpleExpression::Quote(_) => todo!(), // SimpleExpression::Quote(sexpr) => {
+          //     match *sexpr {
+          //         SimpleExpression::RegularForm(exprs) => {
+          //             for expr in exprs.iter().rev() {
+          //                 match
+          //                 constants.push(expr)
+          //             }
+          //         }
+          //         _ => todo!("quote not implemented for {:?}", sexpr),
+          //     }
+          // }
+          // 
     }
 }
 
@@ -158,7 +166,7 @@ mod tests {
 
     use crate::{
         static_stack::StaticStack,
-        vm::{StackValue, VM},
+        vm::{SmallValue, VM},
     };
 
     use super::*;
@@ -264,7 +272,7 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(12)]))
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(12)]))
     }
 
     #[test]
@@ -351,7 +359,7 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(11)))
+        assert_eq!(vm.globals.get("foo"), Some(&SmallValue::Integer(11)))
     }
 
     #[test]
@@ -398,19 +406,17 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.globals.get("foo"), Some(&StackValue::Integer(23)));
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(23)]))
+        assert_eq!(vm.globals.get("foo"), Some(&SmallValue::Integer(23)));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(23)]))
     }
 
     #[test]
     fn test_call_function() {
-        let bc = compile_program(vec![SimpleExpression::RegularForm {
-            car: SimpleExpression::Symbol("*".to_string()).into(),
-            cdr: vec![
-                SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                SimpleExpression::Constant(ConstantsValue::Integer(12)),
-            ],
-        }]);
+        let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
+            SimpleExpression::Symbol("*".to_string()).into(),
+            SimpleExpression::Constant(ConstantsValue::Integer(11)),
+            SimpleExpression::Constant(ConstantsValue::Integer(12)),
+        ])]);
 
         assert_eq!(
             bc.constants,
@@ -439,24 +445,18 @@ mod tests {
 
     #[test]
     fn test_function_with_computed_arguments() {
-        let bc = compile_program(vec![
-            SimpleExpression::RegularForm {
-                car: Box::new(SimpleExpression::Symbol("+".to_string())),
-                cdr: vec![
-                    SimpleExpression::RegularForm {
-                        car: Box::new(SimpleExpression::Symbol("+".to_string())),
-                        cdr: vec![
-                            SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                            SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                        ],
-                    },
-                    SimpleExpression::Mul(Box::new((
-                        SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                        SimpleExpression::Constant(ConstantsValue::Integer(14)),
-                    ))),
-                ],
-            },
-        ]);
+        let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
+            SimpleExpression::Symbol("+".to_string()),
+            SimpleExpression::RegularForm(vec![
+                SimpleExpression::Symbol("+".to_string()),
+                SimpleExpression::Constant(ConstantsValue::Integer(11)),
+                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            ]),
+            SimpleExpression::Mul(Box::new((
+                SimpleExpression::Constant(ConstantsValue::Integer(13)),
+                SimpleExpression::Constant(ConstantsValue::Integer(14)),
+            ))),
+        ])]);
 
         assert_eq!(
             bc.constants,
@@ -503,6 +503,6 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, StaticStack::from([StackValue::Integer(205)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(205)]));
     }
 }
