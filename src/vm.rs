@@ -37,11 +37,11 @@ pub enum ObjectValue {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConsCell(*mut HeapObject, *mut ConsCell);
+pub struct ConsCell(SmallValue, *mut ConsCell);
 
 impl Display for ConsCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({} . {})", &unsafe { &*self.0 }, &unsafe { &*self.1 })
+        write!(f, "({} . {})", self.0, &unsafe { &*self.1 })
     }
 }
 
@@ -276,10 +276,8 @@ impl VM {
             // self.heap = obj_ptr;
             // obj_ptr
             //
-            let heap_val = self.allocate_value(ObjectValue::SmallValue(val));
-
             self.allocate_value(ObjectValue::ConsCell(Box::new(ConsCell(
-                heap_val,
+                val,
                 std::ptr::null_mut(),
             ))))
         };
@@ -872,10 +870,7 @@ mod tests {
             },
             _ => panic!(),
         };
-        assert_eq!(
-            unsafe { &*cell.0 }.value,
-            ObjectValue::SmallValue(SmallValue::Integer(30))
-        );
+        assert_eq!(cell.0, SmallValue::Integer(30));
         assert_eq!(cell.1, std::ptr::null_mut());
     }
 
@@ -891,10 +886,7 @@ mod tests {
         match vm.stack.peek_top().unwrap() {
             SmallValue::Object(v) => match &unsafe { &*v }.value {
                 ObjectValue::ConsCell(cell) => {
-                    assert_eq!(
-                        unsafe { &*cell.0 }.value,
-                        ObjectValue::SmallValue(SmallValue::Integer(30))
-                    );
+                    assert_eq!(cell.0, SmallValue::Integer(30));
                     assert_eq!(cell.1, std::ptr::null_mut());
                 }
                 asdf => panic!("got {}", asdf),
