@@ -10,12 +10,9 @@ use std::collections::HashMap;
 use std::default;
 use std::fmt::{format, Display};
 use std::hash::Hash;
+use std::io::Write;
 use std::ops::Deref;
 use std::panic::PanicInfo;
-
-// THOUGHTS
-// First thought is that we may be able to mirror evaluator.~.eval with "produce bytecode that "
-// simple stack-based virtual machine for integer arithmetic
 
 const STACK_SIZE: usize = 4096;
 pub struct VM {
@@ -33,7 +30,7 @@ pub enum ObjectValue {
     String(String),
     Function(Function),
     Symbol(String),
-    ConsCell(*mut ConsCell),
+    ConsCell(ConsCell),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +38,15 @@ pub struct ConsCell(SmallValue, *mut ConsCell);
 
 impl Display for ConsCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({} . {})", self.0, &unsafe { &*self.1 })
+        let car = self.0;
+
+        let cdr = if self.1.is_null() {
+            "nil".to_string()
+        } else {
+            format!("{}", unsafe { &*self.1 })
+        };
+
+        write!(f, "({} . {})", car, cdr)
     }
 }
 
@@ -51,7 +56,7 @@ impl Display for ObjectValue {
             ObjectValue::String(s) => write!(f, "{}", s),
             ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
             ObjectValue::Symbol(s) => write!(f, ":{}", s),
-            ObjectValue::ConsCell(cell) => write!(f, "{}", unsafe { &**cell }),
+            ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
         }
     }
@@ -76,7 +81,7 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapObject {
     next: *mut HeapObject,
-    value: ObjectValue,
+    pub value: ObjectValue,
     // marked: bool,
 }
 
@@ -92,7 +97,7 @@ pub enum SmallValue {
     Float(f64),
     Boolean(bool),
     Nil,
-    Object(*mut HeapObject),
+    ObjectPtr(*mut HeapObject),
 }
 
 impl Display for SmallValue {
@@ -102,7 +107,7 @@ impl Display for SmallValue {
             SmallValue::Float(fl) => write!(f, "{}", fl),
             SmallValue::Boolean(b) => write!(f, "{}", b),
             SmallValue::Nil => write!(f, "nil"),
-            SmallValue::Object(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
+            SmallValue::ObjectPtr(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
         }
     }
 }
@@ -121,7 +126,7 @@ struct CallFrame {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ConstantsValue {
+pub enum ConstantValue {
     Integer(i64),
     Float(f64),
     Boolean(bool),
@@ -136,7 +141,7 @@ impl SmallValue {
             SmallValue::Float(f) => *f != 0.0,
             SmallValue::Boolean(b) => *b,
             SmallValue::Nil => false,
-            SmallValue::Object(_) => false,
+            SmallValue::ObjectPtr(_) => false,
         }
     }
 }
@@ -144,11 +149,11 @@ impl SmallValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BytecodeChunk {
     pub code: Vec<u8>,
-    pub constants: Vec<ConstantsValue>,
+    pub constants: Vec<ConstantValue>,
 }
 
 impl BytecodeChunk {
-    pub fn new(code: Vec<u8>, constants: Vec<ConstantsValue>) -> Self {
+    pub fn new(code: Vec<u8>, constants: Vec<ConstantValue>) -> Self {
         BytecodeChunk { code, constants }
     }
 }
@@ -230,8 +235,8 @@ impl VM {
             }))
         };
 
-        vm.globals.insert("*".to_string(), SmallValue::Object(mul));
-        vm.globals.insert("+".to_string(), SmallValue::Object(add));
+        vm.globals.insert("*".to_string(), SmallValue::ObjectPtr(mul));
+        vm.globals.insert("+".to_string(), SmallValue::ObjectPtr(add));
 
         vm
     }
@@ -241,6 +246,8 @@ impl VM {
         self.current_chunk = chunk;
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
+            println!("op: {:?}", byte);
+            println!("stack: {:?}", self.stack);
             match byte {
                 Op::Constant => self.handle_constant(),
                 Op::CondJump => self.handle_cond_jump(),
@@ -267,25 +274,30 @@ impl VM {
     fn handle_cons(&mut self) {
         let mut car = self.stack.pop().unwrap();
         let mut cdr = self.stack.pop().unwrap();
-        let heap_obj_ptr = match cdr {
-            SmallValue::Object(o) => match unsafe { &*o }.value {
-                ObjectValue::ConsCell(cdr_ptr) => unsafe { self.allocate_cons(car, cdr_ptr) },
-                _ => panic!("expected cons cell"),
-            },
-            SmallValue::Nil => unsafe {
-                self.allocate_cons(car, std::ptr::null_mut()) // this is potentially not quite right,
-                                                              // I think we should maybe be allocating for SmallValue::Nil
-            },
-            _ => panic!("expected object or nil"),
-        };
-        self.stack.push(SmallValue::Object(heap_obj_ptr));
-        self.advance();
-    }
+        println!("consing car({}) onto cdr({})\n\n", car, cdr);
+        std::io::stdout().flush().unwrap();
 
-    unsafe fn allocate_cons(&mut self, car: SmallValue, cdr: *mut ConsCell) -> *mut HeapObject {
-        let cons_ptr = alloc(Layout::new::<ConsCell>()) as *mut ConsCell;
-        cons_ptr.write(ConsCell(car, cdr));
-        self.allocate_value(ObjectValue::ConsCell(cons_ptr))
+        let heap_obj_ptr = match cdr {
+            SmallValue::ObjectPtr(mut o) => unsafe {
+                let thing = &mut (&mut *o).value;
+                match thing /* &ObjectValue */ {
+                    ObjectValue::ConsCell(ref mut cdr_ptr) => self.allocate_value(
+                        ObjectValue::ConsCell(ConsCell(car, cdr_ptr as *mut ConsCell)),
+                    ),
+                    _ => panic!("expected cons cell"),
+                }
+            },
+            // SmallValue::Nil => unsafe {
+            //     &self.allocate_value(ObjectValue::ConsCell(ConsCell(
+            //         car,
+            //         std::ptr::null_mut(), // This is potentially not quite right, I think we
+            //                               // should maybe be allocating for SmallValue::Nil
+            //     )))
+            // },
+            other => panic!("expected object or nil, got {other}"),
+        };
+        self.stack.push(SmallValue::ObjectPtr(heap_obj_ptr));
+        self.advance();
     }
 
     fn handle_return(&mut self) {
@@ -326,7 +338,7 @@ impl VM {
         let given_arity = self.consume_next_byte_as_byte();
 
         let func_obj = match self.stack.peek_back(given_arity as usize).unwrap() {
-            SmallValue::Object(obj) => match &unsafe { &*obj }.value {
+            SmallValue::ObjectPtr(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(f) => f,
                 _ => panic!("expected ObjectValue::Function"),
             },
@@ -364,7 +376,7 @@ impl VM {
 
     fn handle_print(&mut self) {
         let val = match self.stack.pop().unwrap() {
-            SmallValue::Object(ptr) => format!("{}", &unsafe { &*ptr }),
+            SmallValue::ObjectPtr(ptr) => format!("{}", &unsafe { &*ptr }),
             SmallValue::Integer(i) => i.to_string(),
             SmallValue::Float(f) => f.to_string(),
             SmallValue::Boolean(b) => b.to_string(),
@@ -377,7 +389,7 @@ impl VM {
     // fn handle_reference_global(&mut self, chunk: &BytecodeChunk) {
     fn handle_reference_global(&mut self) {
         let name = match self.consume_next_byte_as_constant() {
-            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s,
                 _ => panic!("expected string value for reference"),
             },
@@ -393,7 +405,7 @@ impl VM {
         let value = self.stack.pop().unwrap();
         let name = self.consume_next_byte_as_constant();
         match name {
-            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => {
                     self.globals.insert(s.clone(), value);
                 }
@@ -449,14 +461,14 @@ impl VM {
         let a = self.stack.pop().unwrap();
         let result = match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a + b),
-            (SmallValue::Object(a), SmallValue::Object(b)) => {
+            (SmallValue::ObjectPtr(a), SmallValue::ObjectPtr(b)) => {
                 match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
                     (ObjectValue::String(a), ObjectValue::String(b)) => {
                         let obj_ptr = unsafe {
                             let obj_value = ObjectValue::String(a.clone() + b);
                             self.allocate_value(obj_value)
                         };
-                        SmallValue::Object(obj_ptr)
+                        SmallValue::ObjectPtr(obj_ptr)
                     }
                     _ => todo!(),
                 }
@@ -501,13 +513,13 @@ impl VM {
 
             match self.current_chunk.constants[constant_idx].clone() {
                 // IMPORTANT: clone
-                ConstantsValue::Integer(v) => SmallValue::Integer(v),
-                ConstantsValue::Float(v) => SmallValue::Float(v),
-                ConstantsValue::Boolean(v) => SmallValue::Boolean(v),
-                ConstantsValue::Nil => SmallValue::Nil,
-                ConstantsValue::Object(value) => {
+                ConstantValue::Integer(v) => SmallValue::Integer(v),
+                ConstantValue::Float(v) => SmallValue::Float(v),
+                ConstantValue::Boolean(v) => SmallValue::Boolean(v),
+                ConstantValue::Nil => SmallValue::Nil,
+                ConstantValue::Object(value) => {
                     let obj_ptr = self.allocate_value(value);
-                    SmallValue::Object(obj_ptr)
+                    SmallValue::ObjectPtr(obj_ptr)
                 }
             }
         }
@@ -538,24 +550,7 @@ impl VM {
 
     fn runtime_error(&self, message: &str) {
         panic!("Runtime error: {}", message);
-        // std::process::exit(1);
     }
-
-    // fn repl(&mut self) {
-    //     loop {
-    //         let mut input = String::new();
-    //         std::io::stdin().read_line(&mut input).unwrap();
-    //         let opcode: u8 = input.trim().parse().unwrap();
-    //         let op = Op::try_from(opcode).unwrap();
-    //         self.run(chunk)
-    //     }
-    // }
-
-    // unsafe fn allocate<T>(obj: T) -> *mut T {
-    //     let obj_ptr = alloc(Layout::new::<T>()) as *mut T;
-    //     obj_ptr.write(obj);
-    //     obj_ptr
-    // }
 }
 
 #[cfg(test)]
@@ -567,7 +562,7 @@ mod tests {
         let mut vm = VM::default();
         let chunk = BytecodeChunk {
             code: vec![Op::Constant.into(), 0x00, Op::DebugEnd.into()],
-            constants: vec![ConstantsValue::Integer(5)],
+            constants: vec![ConstantValue::Integer(5)],
         };
         vm.run(chunk);
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(5)]));
@@ -587,10 +582,10 @@ mod tests {
                 Op::Add.into(),
                 Op::DebugEnd.into(),
             ],
-            constants: vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)],
+            constants: vec![ConstantValue::Integer(5), ConstantValue::Integer(6)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(11))
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(11))
     }
 
     #[test]
@@ -614,9 +609,9 @@ mod tests {
         vm.run(BytecodeChunk {
             code: bytecode,
             constants: vec![
-                ConstantsValue::Integer(1),
-                ConstantsValue::Integer(3),
-                ConstantsValue::Integer(2),
+                ConstantValue::Integer(1),
+                ConstantValue::Integer(3),
+                ConstantValue::Integer(2),
             ],
         });
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(2)]));
@@ -640,9 +635,9 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Integer(0),
-                ConstantsValue::Integer(3),
-                ConstantsValue::Integer(2),
+                ConstantValue::Integer(0),
+                ConstantValue::Integer(3),
+                ConstantValue::Integer(2),
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -657,7 +652,7 @@ mod tests {
     fn test_string() {
         let chunk = BytecodeChunk {
             code: vec![Op::Constant.into(), 0, Op::DebugEnd.into()],
-            constants: vec![ConstantsValue::Object(ObjectValue::String(
+            constants: vec![ConstantValue::Object(ObjectValue::String(
                 "Hello, world!".to_string(),
             ))],
         };
@@ -668,7 +663,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -691,8 +686,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
-                ConstantsValue::Object(ObjectValue::String("bar".to_string())),
+                ConstantValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Object(ObjectValue::String("bar".to_string())),
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -702,7 +697,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            SmallValue::Object(ptr) => match &unsafe { &*ptr }.value {
+            SmallValue::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -724,8 +719,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Integer(5),                                     // value
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
+                ConstantValue::Integer(5),                                     // value
+                ConstantValue::Object(ObjectValue::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -752,8 +747,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Integer(5),                                     // value
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())), // name
+                ConstantValue::Integer(5),                                     // value
+                ConstantValue::Object(ObjectValue::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -761,7 +756,7 @@ mod tests {
         let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(5));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(6) });
     }
 
@@ -780,7 +775,7 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Object(ObjectValue::Function(
+                ConstantValue::Object(ObjectValue::Function(
                     Function {
                         name: "asdf".to_string(),
                         arity: 2,
@@ -798,14 +793,14 @@ mod tests {
                         }),
                     }, // )
                 )),
-                ConstantsValue::Integer(20),
-                ConstantsValue::Integer(30),
+                ConstantValue::Integer(20),
+                ConstantValue::Integer(30),
             ],
         };
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(50));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(50));
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
     }
 
@@ -824,7 +819,7 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantsValue::Object(ObjectValue::Function(
+                ConstantValue::Object(ObjectValue::Function(
                     Function {
                         name: "asdf".to_string(),
                         arity: 2,
@@ -842,14 +837,14 @@ mod tests {
                         }),
                     }, // )
                 )),
-                ConstantsValue::Integer(20),
-                ConstantsValue::Integer(30),
+                ConstantValue::Integer(20),
+                ConstantValue::Integer(30),
             ],
         };
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), SmallValue::Integer(50));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(50));
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
     }
 
@@ -865,42 +860,57 @@ mod tests {
                 Op::Cons.into(), // '(30 . nil)
                 Op::DebugEnd.into(),
             ],
-            constants: vec![ConstantsValue::Nil, ConstantsValue::Integer(30)],
+            constants: vec![ConstantValue::Nil, ConstantValue::Integer(30)],
         };
 
         let mut vm = VM::default();
         vm.run(bc);
         let cell = match vm.stack.peek_top().unwrap() {
-            SmallValue::Object(v) => match &unsafe { &*v }.value {
-                ObjectValue::ConsCell(cell) => *cell,
+            SmallValue::ObjectPtr(v) => match &unsafe { &**v }.value {
+                ObjectValue::ConsCell(cell) => cell,
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        assert_eq!(unsafe { &*cell }.0, SmallValue::Integer(30));
-        assert_eq!(unsafe { &*cell }.1, std::ptr::null_mut());
+        assert_eq!(cell.0, SmallValue::Integer(30));
+        assert_eq!(cell.1, std::ptr::null_mut());
+        println!("{}", cell);
     }
 
-    // #[test]
-    // fn test_constructing_cons_list() {
-    //     let bc = BytecodeChunk {
-    //         code: vec![Op::Constant.into(), 0, Op::Cons.into()],
-    //         constants: vec![ConstantsValue::Integer(30)],
-    //     };
+    #[test]
+    fn test_cons_2() {
+        let bc = BytecodeChunk {
+            code: vec![
+                Op::Constant.into(),
+                0, // nil
+                Op::Constant.into(),
+                1,               // 20
+                Op::Cons.into(), // '(20 . nil)
+                Op::Constant.into(),
+                2,                   // 10
+                Op::Cons.into(),     // '(10 . (20 . nil))
+                Op::DebugEnd.into(), //
+            ],
+            constants: vec![
+                ConstantValue::Nil,
+                ConstantValue::Integer(20),
+                ConstantValue::Integer(10),
+            ],
+        };
 
-    //     let mut vm = VM::default();
-    //     vm.run(bc);
-    //     match vm.stack.peek_top().unwrap() {
-    //         SmallValue::Object(v) => match unsafe { &*v }.value {
-    //             ObjectValue::ConsCell(cell) => {
-    //                 assert_eq!(unsafe { (*cell) }.0, SmallValue::Integer(30));
-    //                 assert_eq!(unsafe { (*cell) }.1, std::ptr::null_mut());
-    //             }
-    //             asdf => panic!("got {}", asdf),
-    //         },
-    //         _ => panic!(),
-    //     };
-    // }
+        let mut vm = VM::default();
+        vm.run(bc);
+        let cell = match *vm.stack.peek_top().unwrap() {
+            SmallValue::ObjectPtr(v) => match &unsafe { &*v }.value {
+                ObjectValue::ConsCell(cell) => cell,
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        assert_eq!(&cell.0, &SmallValue::Integer(10));
+        println!("{}", cell);
+        // assert_eq!(&unsafe { *cell.1 }.0, &SmallValue::Integer(20));
+    }
 }
 
 // fn print_heap(head_: *mut HeapObject) {
@@ -917,3 +927,21 @@ mod tests {
 //         }
 //     }
 // }
+
+impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
+    pub fn from<const N: usize>(values: [T; N]) -> Self {
+        let mut stack = Self::new();
+        for value in values {
+            stack.push(value);
+        }
+        return stack;
+    }
+
+    pub fn peek_top(&self) -> Option<&T> {
+        self.at(self.ptr as usize)
+    }
+
+    pub fn len(&self) -> usize {
+        self.ptr as usize + 1
+    }
+}

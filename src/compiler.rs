@@ -2,27 +2,19 @@
 
 use std::collections::HashMap;
 
-use crate::vm::{BytecodeChunk, ConstantsValue, Function, ObjectValue, Op};
+use crate::{sexpr::Sexpr, vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op}};
 
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum SimpleExpression {
-    Add(Box<(SimpleExpression, SimpleExpression)>),
-    Mul(Box<(SimpleExpression, SimpleExpression)>),
-    Sub(Box<(SimpleExpression, SimpleExpression)>),
-    Div(Box<(SimpleExpression, SimpleExpression)>),
-    Quote(Box<SimpleExpression>),
-    // RegularForm {
-    //     car: Box<SimpleExpression>,
-    //     cdr: Vec<SimpleExpression>,
-    // },
+    Quote(Sexpr),
     RegularForm(Vec<SimpleExpression>),
     If {
         condition: Box<SimpleExpression>,
         then: Box<SimpleExpression>,
         else_: Box<SimpleExpression>,
     },
-    Constant(ConstantsValue), // TODO don't use this type
+    Constant(ConstantValue), // TODO maybe don't use this ConstantValue type here, make own one.
     DeclareGlobal {
         name: String,
         value: Box<SimpleExpression>,
@@ -34,29 +26,9 @@ pub enum SimpleExpression {
 fn compile_expression(
     expression: SimpleExpression,
     code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantsValue>,
+    constants: &mut Vec<ConstantValue>,
 ) {
     match expression {
-        SimpleExpression::Add(args) => {
-            compile_expression((*args).0, code, constants);
-            compile_expression((*args).1, code, constants);
-            code.push(Op::Add.into());
-        }
-        SimpleExpression::Sub(args) => {
-            compile_expression((*args).0, code, constants);
-            compile_expression((*args).1, code, constants);
-            code.push(Op::Sub.into());
-        }
-        SimpleExpression::Mul(args) => {
-            compile_expression((*args).0, code, constants);
-            compile_expression((*args).1, code, constants);
-            code.push(Op::Mul.into());
-        }
-        SimpleExpression::Div(args) => {
-            compile_expression((*args).0, code, constants);
-            compile_expression((*args).1, code, constants);
-            code.push(Op::Div.into());
-        }
         SimpleExpression::Constant(value) => {
             constants.push(value);
             code.push(Op::Constant.into());
@@ -96,12 +68,12 @@ fn compile_expression(
         SimpleExpression::DeclareGlobal { name, value } => {
             compile_expression(*value, code, constants);
             code.push(Op::DeclareGlobal.into());
-            constants.push(ConstantsValue::Object(ObjectValue::String(name)));
+            constants.push(ConstantValue::Object(ObjectValue::String(name)));
             code.push(constants.len() as u8 - 1);
         }
         SimpleExpression::Symbol(symbol) => {
             code.push(Op::ReferenceGlobal.into());
-            constants.push(ConstantsValue::Object(ObjectValue::String(symbol)));
+            constants.push(ConstantValue::Object(ObjectValue::String(symbol)));
             code.push(constants.len() as u8 - 1);
 
             // let constant_idx = constants
@@ -125,8 +97,13 @@ fn compile_expression(
         SimpleExpression::RegularForm(exprs) => {
             // We don't know the arity of the function at compile-time so we
             // defensively put the number of arguments to check at runtime
-            let arity = exprs.len() - 1;
-            let arity = if arity > 255 { panic!() } else { arity as u8 };
+            let arity = {
+                let arity = exprs.len() - 1;
+                if arity > 255 {
+                    panic!()
+                }
+                arity as u8
+            };
 
             for expr in exprs {
                 compile_expression(expr, code, constants);
@@ -135,24 +112,55 @@ fn compile_expression(
             code.push(Op::FuncCall.into());
             code.push(arity);
         }
-        SimpleExpression::Quote(_) => todo!(), // SimpleExpression::Quote(sexpr) => {
-          //     match *sexpr {
-          //         SimpleExpression::RegularForm(exprs) => {
-          //             for expr in exprs.iter().rev() {
-          //                 match
-          //                 constants.push(expr)
-          //             }
-          //         }
-          //         _ => todo!("quote not implemented for {:?}", sexpr),
-          //     }
-          // }
-          // 
+        SimpleExpression::Quote(sexpr) => match sexpr {
+            Sexpr::List { quasiquote, sexprs } => {
+                if quasiquote {
+                    todo!("quasiquote not implemented")
+                }
+                // nil for end of list
+                code.push(Op::Constant.into());
+                constants.push(ConstantValue::Nil);
+                code.push(constants.len() as u8 - 1);
+
+                // cons each element in reverse order
+                for expr in sexprs.iter().rev() {
+                    compile_expression(
+                        SimpleExpression::Quote(expr.clone()), //
+                        code,
+                        constants,
+                    );
+                    code.push(Op::Cons.into())
+                }
+            }
+            Sexpr::Symbol(s) => {
+                code.push(Op::Constant.into());
+                constants.push(ConstantValue::Object(ObjectValue::Symbol(s)));
+                code.push(constants.len() as u8 - 1);
+            }
+            Sexpr::Int(i) => {
+                code.push(Op::Constant.into());
+                constants.push(ConstantValue::Integer(i));
+                code.push(constants.len() as u8 - 1);
+            }
+            Sexpr::Float(f) => {
+                code.push(Op::Constant.into());
+                constants.push(ConstantValue::Float(f));
+                code.push(constants.len() as u8 - 1);
+            }
+            Sexpr::String(_) => todo!(),
+            Sexpr::Bool(_) => todo!(),
+            Sexpr::Function { parameters, body } => todo!(),
+            Sexpr::Macro { parameters, body } => todo!(),
+            Sexpr::BuiltIn(_) => todo!(),
+            Sexpr::CommaUnquote(_) => todo!(),
+            Sexpr::Nil => todo!(),
+        },
     }
 }
 
 pub fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
-    let mut constants: Vec<ConstantsValue> = vec![];
+    let mut constants: Vec<ConstantValue> = vec![];
     for expression in expressions {
         compile_expression(expression, &mut code, &mut constants);
     }
@@ -172,76 +180,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compile_0() {
-        let expression = SimpleExpression::Add(Box::new((
-            SimpleExpression::Constant(ConstantsValue::Integer(5)),
-            SimpleExpression::Constant(ConstantsValue::Integer(6)),
-        )));
-        let bc = compile_program(vec![expression]);
-        assert_eq!(
-            bc.code,
-            vec![
-                Op::Constant.into(),
-                0,
-                Op::Constant.into(),
-                1,
-                Op::Add.into(),
-                Op::DebugEnd.into(),
-            ]
-        );
-        assert_eq!(
-            bc.constants,
-            vec![ConstantsValue::Integer(5), ConstantsValue::Integer(6)]
-        );
-    }
-
-    #[test]
-    fn test_compile_compound() {
-        let expression = SimpleExpression::Add(Box::new((
-            SimpleExpression::Add(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                SimpleExpression::Constant(ConstantsValue::Integer(12)),
-            ))),
-            SimpleExpression::Add(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                SimpleExpression::Constant(ConstantsValue::Integer(14)),
-            ))),
-        )));
-        let bc = compile_program(vec![expression]);
-        assert_eq!(
-            bc.code,
-            vec![
-                Op::Constant.into(),
-                0,
-                Op::Constant.into(),
-                1,
-                Op::Add.into(),
-                Op::Constant.into(),
-                2,
-                Op::Constant.into(),
-                3,
-                Op::Add.into(),
-                Op::Add.into(),
-                Op::DebugEnd.into(),
-            ]
-        );
-        assert_eq!(
-            bc.constants,
-            vec![
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(12),
-                ConstantsValue::Integer(13),
-                ConstantsValue::Integer(14),
-            ]
-        );
-    }
-
-    #[test]
     fn test_if() {
         let expression = SimpleExpression::If {
-            condition: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(11))),
-            then: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(12))),
-            else_: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(13))),
+            condition: Box::new(SimpleExpression::Constant(ConstantValue::Integer(11))),
+            then: Box::new(SimpleExpression::Constant(ConstantValue::Integer(12))),
+            else_: Box::new(SimpleExpression::Constant(ConstantValue::Integer(13))),
         };
         let bc = compile_program(vec![expression]);
         assert_eq!(
@@ -263,9 +206,9 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(13),
-                ConstantsValue::Integer(12)
+                ConstantValue::Integer(11),
+                ConstantValue::Integer(13),
+                ConstantValue::Integer(12)
             ]
         );
 
@@ -276,66 +219,10 @@ mod tests {
     }
 
     #[test]
-    fn test_if_complex() {
-        let expression = SimpleExpression::If {
-            condition: Box::new(SimpleExpression::Add(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                SimpleExpression::Constant(ConstantsValue::Integer(12)),
-            )))),
-            then: Box::new(SimpleExpression::Add(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                SimpleExpression::Constant(ConstantsValue::Integer(14)),
-            )))),
-            else_: Box::new(SimpleExpression::Add(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(15)),
-                SimpleExpression::Constant(ConstantsValue::Integer(16)),
-            )))),
-        };
-        let bc = compile_program(vec![expression]);
-        assert_eq!(
-            bc.code,
-            vec![
-                Op::Constant.into(),
-                0,
-                Op::Constant.into(),
-                1,
-                Op::Add.into(),
-                Op::CondJump.into(),
-                8,
-                Op::Constant.into(),
-                2,
-                Op::Constant.into(),
-                3,
-                Op::Add.into(),
-                Op::Jump.into(),
-                6,
-                Op::Constant.into(),
-                4,
-                Op::Constant.into(),
-                5,
-                Op::Add.into(),
-                // idx 19
-                Op::DebugEnd.into(),
-            ]
-        );
-        assert_eq!(
-            bc.constants,
-            vec![
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(12),
-                ConstantsValue::Integer(15),
-                ConstantsValue::Integer(16),
-                ConstantsValue::Integer(13),
-                ConstantsValue::Integer(14),
-            ]
-        );
-    }
-
-    #[test]
     fn test_declare_global() {
         let expression = SimpleExpression::DeclareGlobal {
             name: "foo".to_string(),
-            value: Box::new(SimpleExpression::Constant(ConstantsValue::Integer(11))),
+            value: Box::new(SimpleExpression::Constant(ConstantValue::Integer(11))),
         };
         let bc = compile_program(vec![expression]);
         assert_eq!(
@@ -351,8 +238,8 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantsValue::Integer(11),
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Integer(11),
+                ConstantValue::Object(ObjectValue::String("foo".to_string())),
             ]
         );
 
@@ -367,10 +254,11 @@ mod tests {
         let program = vec![
             SimpleExpression::DeclareGlobal {
                 name: "foo".to_string(),
-                value: Box::new(SimpleExpression::Add(Box::new((
-                    SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                    SimpleExpression::Constant(ConstantsValue::Integer(12)),
-                )))),
+                value: Box::new(SimpleExpression::RegularForm(vec![
+                    SimpleExpression::Symbol("+".to_string()),
+                    SimpleExpression::Constant(ConstantValue::Integer(11)),
+                    SimpleExpression::Constant(ConstantValue::Integer(12)),
+                ])),
             },
             SimpleExpression::Symbol("foo".to_string()),
         ];
@@ -380,10 +268,10 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(12),
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
-                ConstantsValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Integer(11),
+                ConstantValue::Integer(12),
+                ConstantValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Object(ObjectValue::String("foo".to_string())),
             ]
         );
 
@@ -414,16 +302,16 @@ mod tests {
     fn test_call_function() {
         let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
             SimpleExpression::Symbol("*".to_string()).into(),
-            SimpleExpression::Constant(ConstantsValue::Integer(11)),
-            SimpleExpression::Constant(ConstantsValue::Integer(12)),
+            SimpleExpression::Constant(ConstantValue::Integer(11)),
+            SimpleExpression::Constant(ConstantValue::Integer(12)),
         ])]);
 
         assert_eq!(
             bc.constants,
             vec![
-                ConstantsValue::Object(ObjectValue::String("*".to_string())),
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(12),
+                ConstantValue::Object(ObjectValue::String("*".to_string())),
+                ConstantValue::Integer(11),
+                ConstantValue::Integer(12),
             ],
         );
 
@@ -449,24 +337,25 @@ mod tests {
             SimpleExpression::Symbol("+".to_string()),
             SimpleExpression::RegularForm(vec![
                 SimpleExpression::Symbol("+".to_string()),
-                SimpleExpression::Constant(ConstantsValue::Integer(11)),
-                SimpleExpression::Constant(ConstantsValue::Integer(12)),
+                SimpleExpression::Constant(ConstantValue::Integer(11)),
+                SimpleExpression::Constant(ConstantValue::Integer(12)),
             ]),
-            SimpleExpression::Mul(Box::new((
-                SimpleExpression::Constant(ConstantsValue::Integer(13)),
-                SimpleExpression::Constant(ConstantsValue::Integer(14)),
-            ))),
+            SimpleExpression::RegularForm(vec![
+                SimpleExpression::Symbol("+".to_string()),
+                SimpleExpression::Constant(ConstantValue::Integer(13)),
+                SimpleExpression::Constant(ConstantValue::Integer(14)),
+            ]),
         ])]);
 
         assert_eq!(
             bc.constants,
             vec![
-                ConstantsValue::Object(ObjectValue::String("+".to_string())),
-                ConstantsValue::Object(ObjectValue::String("+".to_string())),
-                ConstantsValue::Integer(11),
-                ConstantsValue::Integer(12),
-                ConstantsValue::Integer(13),
-                ConstantsValue::Integer(14),
+                ConstantValue::Object(ObjectValue::String("+".to_string())),
+                ConstantValue::Object(ObjectValue::String("+".to_string())),
+                ConstantValue::Integer(11),
+                ConstantValue::Integer(12),
+                ConstantValue::Integer(13),
+                ConstantValue::Integer(14),
             ]
         );
 
@@ -504,5 +393,104 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(205)]));
+    }
+
+    #[test]
+    fn test_cons() {
+        let bc = compile_program(vec![SimpleExpression::Quote(Sexpr::List {
+            quasiquote: false,
+            sexprs: vec![
+                Sexpr::Int(1),
+                Sexpr::Int(2),
+                Sexpr::Int(3),
+            ],
+        })]);
+
+        assert_eq!(
+            bc.constants,
+            vec![
+                ConstantValue::Nil,
+                ConstantValue::Integer(3),
+                ConstantValue::Integer(2),
+                ConstantValue::Integer(1),
+            ]
+        );
+
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Constant.into(),
+                0, // load nil
+                Op::Constant.into(),
+                1, // load 3
+                Op::Cons.into(),
+                Op::Constant.into(),
+                2, // load 2
+                Op::Cons.into(),
+                Op::Constant.into(),
+                3, // load 1
+                Op::Cons.into(),
+                Op::DebugEnd.into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_cons_nested() {
+        let bc = compile_program(vec![SimpleExpression::Quote(Sexpr::List {
+            quasiquote: false,
+            sexprs: vec![
+                Sexpr::Int(10),
+                Sexpr::List {
+                    quasiquote: false,
+                    sexprs: vec![Sexpr::Int(20), Sexpr::Int(30)],
+                },
+                Sexpr::Int(40),
+            ],
+        })]);
+
+        assert_eq!(
+            bc.constants,
+            vec![
+                ConstantValue::Nil,
+                ConstantValue::Integer(40),
+                ConstantValue::Nil,
+                ConstantValue::Integer(30),
+                ConstantValue::Integer(20),
+                ConstantValue::Integer(10),
+            ]
+        );
+        
+        assert_eq!(
+            bc.code,
+            vec![
+                Op::Constant.into(),
+                0, // load nil
+                Op::Constant.into(),
+                1, // load 4
+                Op::Cons.into(),
+                Op::Constant.into(),
+                2, // load nil
+                Op::Constant.into(),
+                3, // load 3
+                Op::Cons.into(),
+                Op::Constant.into(),
+                4, // load 2
+                Op::Cons.into(),
+                Op::Cons.into(),
+                Op::Constant.into(),
+                5, // load 1
+                Op::Cons.into(),
+                Op::DebugEnd.into(),
+            ]
+        );
+
+        // let mut vm = VM::default();
+        // vm.run(bc);
+        // let list = *vm.stack.at(0).unwrap();
+        // match list {
+        //     SmallValue::Object(o) => println!("{}", unsafe { &*o }.value),
+        //     _ => panic!("Expected list"),
+        // }
     }
 }

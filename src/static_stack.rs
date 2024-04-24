@@ -38,14 +38,6 @@ impl<T: Display, const MAX: usize> Display for StaticStack<T, MAX> {
 }
 
 impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
-    pub fn from<const N: usize>(values: [T; N]) -> Self {
-        let mut stack = Self::new();
-        for value in values {
-            stack.push(value);
-        }
-        return stack;
-    }
-
     pub fn new() -> Self {
         Self {
             stack: [Default::default(); MAX],
@@ -67,13 +59,6 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         return Some(value);
     }
 
-    pub fn peek_top(&self) -> Option<T> {
-        if self.ptr < 0 {
-            return None;
-        }
-        return Some(self.stack[self.ptr as usize]);
-    }
-
     pub fn peek_back(&self, back: usize) -> Option<T> {
         let idx = self.ptr - back as i32;
         if idx < 0 {
@@ -82,9 +67,6 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         return Some(self.stack[idx as usize]);
     }
 
-    pub fn len(&self) -> usize {
-        (self.ptr + 1) as usize
-    }
 
     pub fn at(&self, idx: usize) -> Option<&T> {
         if idx > self.ptr as usize {
