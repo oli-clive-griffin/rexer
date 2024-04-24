@@ -35,17 +35,15 @@ fn e2e_1() {
 
 #[test]
 fn e2e_2() {
-    let program = vec![SimpleExpression::RegularForm {
-        car: Box::new(SimpleExpression::If {
+    let program = vec![SimpleExpression::RegularForm(vec![
+        SimpleExpression::If {
             condition: Box::new(SimpleExpression::Constant(ConstantsValue::Boolean(true))),
             then: Box::new(SimpleExpression::Symbol("*".to_string())),
             else_: Box::new(SimpleExpression::Symbol("+".to_string())),
-        }),
-        cdr: vec![
-            SimpleExpression::Constant(ConstantsValue::Integer(2)),
-            SimpleExpression::Constant(ConstantsValue::Integer(3)),
-        ],
-    }];
+        },
+        SimpleExpression::Constant(ConstantsValue::Integer(2)),
+        SimpleExpression::Constant(ConstantsValue::Integer(3)),
+    ])];
 
     let bc = compile_program(program);
 
@@ -60,14 +58,12 @@ fn e2e_2() {
 #[test]
 #[should_panic(expected = "Runtime error: arity mismatch: Expected 2 arguments, got 3")]
 fn e2e_3() {
-    let program = vec![SimpleExpression::RegularForm {
-        car: Box::new(SimpleExpression::Symbol("*".to_string())),
-        cdr: vec![
-            SimpleExpression::Constant(ConstantsValue::Integer(2)),
-            SimpleExpression::Constant(ConstantsValue::Integer(3)),
-            SimpleExpression::Constant(ConstantsValue::Integer(4)),
-        ],
-    }];
+    let program = vec![SimpleExpression::RegularForm(vec![
+        SimpleExpression::Symbol("*".to_string()),
+        SimpleExpression::Constant(ConstantsValue::Integer(2)),
+        SimpleExpression::Constant(ConstantsValue::Integer(3)),
+        SimpleExpression::Constant(ConstantsValue::Integer(4)),
+    ])];
 
     let bc = compile_program(program);
 

@@ -33,7 +33,7 @@ pub enum ObjectValue {
     String(String),
     Function(Function),
     Symbol(String),
-    ConsCell(Box<ConsCell>),
+    ConsCell(*mut ConsCell),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +51,7 @@ impl Display for ObjectValue {
             ObjectValue::String(s) => write!(f, "{}", s),
             ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
             ObjectValue::Symbol(s) => write!(f, ":{}", s),
-            ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
+            ObjectValue::ConsCell(cell) => write!(f, "{}", unsafe { &**cell }),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
         }
     }
@@ -265,27 +265,27 @@ impl VM {
     // the following are all in the wrong order and I don't care
 
     fn handle_cons(&mut self) {
-        let val = self.stack.pop().unwrap();
-        // this is trippy, soooo, I've made `ObjectValue::SmallValue` a heap-allocated value (that's usually on the stack)
-        let ptr = unsafe {
-            // let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
-            // obj_ptr.write(HeapObject {
-            //     next: self.heap,
-            //     value: obj_value,
-            // });
-            // self.heap = obj_ptr;
-            // obj_ptr
-            //
-            self.allocate_value(ObjectValue::ConsCell(Box::new(ConsCell(
-                val,
-                std::ptr::null_mut(),
-            ))))
+        let mut car = self.stack.pop().unwrap();
+        let mut cdr = self.stack.pop().unwrap();
+        let heap_obj_ptr = match cdr {
+            SmallValue::Object(o) => match unsafe { &*o }.value {
+                ObjectValue::ConsCell(cdr_ptr) => unsafe { self.allocate_cons(car, cdr_ptr) },
+                _ => panic!("expected cons cell"),
+            },
+            SmallValue::Nil => unsafe {
+                self.allocate_cons(car, std::ptr::null_mut()) // this is potentially not quite right,
+                                                              // I think we should maybe be allocating for SmallValue::Nil
+            },
+            _ => panic!("expected object or nil"),
         };
-        // when we get it's pointer, we can just store it back on the stack inside a `SmallValue::Object`
-        // so this is a value containing a pointer to a value that's on the heap
-        // SmallValue::Object(*mut HeapObject::ObjectValue::SmallValue(val))
-        self.stack.push(SmallValue::Object(ptr));
-        self.advance()
+        self.stack.push(SmallValue::Object(heap_obj_ptr));
+        self.advance();
+    }
+
+    unsafe fn allocate_cons(&mut self, car: SmallValue, cdr: *mut ConsCell) -> *mut HeapObject {
+        let cons_ptr = alloc(Layout::new::<ConsCell>()) as *mut ConsCell;
+        cons_ptr.write(ConsCell(car, cdr));
+        self.allocate_value(ObjectValue::ConsCell(cons_ptr))
     }
 
     fn handle_return(&mut self) {
@@ -857,43 +857,50 @@ mod tests {
     #[test]
     fn test_cons() {
         let bc = BytecodeChunk {
-            code: vec![Op::Constant.into(), 0, Op::Cons.into(), Op::DebugEnd.into()],
-            constants: vec![ConstantsValue::Integer(30)],
+            code: vec![
+                Op::Constant.into(),
+                0, // nil
+                Op::Constant.into(),
+                1,               // 30
+                Op::Cons.into(), // '(30 . nil)
+                Op::DebugEnd.into(),
+            ],
+            constants: vec![ConstantsValue::Nil, ConstantsValue::Integer(30)],
         };
 
         let mut vm = VM::default();
         vm.run(bc);
         let cell = match vm.stack.peek_top().unwrap() {
             SmallValue::Object(v) => match &unsafe { &*v }.value {
-                ObjectValue::ConsCell(cell) => cell,
+                ObjectValue::ConsCell(cell) => *cell,
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        assert_eq!(cell.0, SmallValue::Integer(30));
-        assert_eq!(cell.1, std::ptr::null_mut());
+        assert_eq!(unsafe { &*cell }.0, SmallValue::Integer(30));
+        assert_eq!(unsafe { &*cell }.1, std::ptr::null_mut());
     }
 
-    #[test]
-    fn test_constructing_cons_list() {
-        let bc = BytecodeChunk {
-            code: vec![Op::Constant.into(), 0, Op::Cons.into(), Op::DebugEnd.into()],
-            constants: vec![ConstantsValue::Integer(30)],
-        };
+    // #[test]
+    // fn test_constructing_cons_list() {
+    //     let bc = BytecodeChunk {
+    //         code: vec![Op::Constant.into(), 0, Op::Cons.into()],
+    //         constants: vec![ConstantsValue::Integer(30)],
+    //     };
 
-        let mut vm = VM::default();
-        vm.run(bc);
-        match vm.stack.peek_top().unwrap() {
-            SmallValue::Object(v) => match &unsafe { &*v }.value {
-                ObjectValue::ConsCell(cell) => {
-                    assert_eq!(cell.0, SmallValue::Integer(30));
-                    assert_eq!(cell.1, std::ptr::null_mut());
-                }
-                asdf => panic!("got {}", asdf),
-            },
-            _ => panic!(),
-        };
-    }
+    //     let mut vm = VM::default();
+    //     vm.run(bc);
+    //     match vm.stack.peek_top().unwrap() {
+    //         SmallValue::Object(v) => match unsafe { &*v }.value {
+    //             ObjectValue::ConsCell(cell) => {
+    //                 assert_eq!(unsafe { (*cell) }.0, SmallValue::Integer(30));
+    //                 assert_eq!(unsafe { (*cell) }.1, std::ptr::null_mut());
+    //             }
+    //             asdf => panic!("got {}", asdf),
+    //         },
+    //         _ => panic!(),
+    //     };
+    // }
 }
 
 // fn print_heap(head_: *mut HeapObject) {

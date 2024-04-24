@@ -23,7 +23,6 @@ impl<T: PartialEq, const MAX: usize> PartialEq for StaticStack<T, MAX> {
 impl<T: Display, const MAX: usize> Display for StaticStack<T, MAX> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::from("[");
-        println!("ptr: {}", self.ptr);
         let max = if self.ptr < 0 {
             return write!(f, "[]");
         } else {
