@@ -279,9 +279,7 @@ impl VM {
 
         let heap_obj_ptr = match cdr {
             SmallValue::ObjectPtr(o) => unsafe {
-                let obj_val = &mut (&mut *o).value;
-
-                match obj_val {
+                match &mut (*o).value {
                     ObjectValue::ConsCell(ref mut cdr_ptr) => self.allocate_value(
                         ObjectValue::ConsCell(ConsCell(car, cdr_ptr as *mut ConsCell)),
                     ),
@@ -310,7 +308,7 @@ impl VM {
         // clean up the stack
         let return_val = self.stack.pop().expect("expected a return value");
         // pop the arguments
-        for _ in 0..frame.arity as usize {
+        for _ in 0..frame.arity {
             self.stack.pop();
         }
         // pop the function
@@ -327,7 +325,7 @@ impl VM {
         let stack_frame_start = current_callframe.stack_frame_start;
         let arity = current_callframe.arity;
         let offset = self.consume_next_byte_as_byte() as usize;
-        let value = self.stack.at(stack_frame_start + offset).unwrap().clone();
+        let value = *self.stack.at(stack_frame_start + offset).unwrap();
         self.stack.push(value);
         self.advance();
     }
@@ -371,7 +369,7 @@ impl VM {
                     ptr as usize
                 }
             },
-            arity: func_obj.arity as usize,
+            arity: func_obj.arity,
         }
     }
 
@@ -396,7 +394,7 @@ impl VM {
             },
             _ => panic!("expected string value for reference"),
         };
-        let stack_val = self.globals.get(name).unwrap().clone();
+        let stack_val = *self.globals.get(name).unwrap();
         self.stack.push(stack_val);
         self.advance();
     }
@@ -547,6 +545,24 @@ impl VM {
 
     fn runtime_error(&self, message: &str) {
         panic!("Runtime error: {}", message);
+    }
+}
+
+impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
+    pub fn from<const N: usize>(values: [T; N]) -> Self {
+        let mut stack = Self::new();
+        for value in values {
+            stack.push(value);
+        }
+        stack
+    }
+
+    pub fn peek_top(&self) -> Option<&T> {
+        self.at(self.ptr as usize)
+    }
+
+    pub fn len(&self) -> usize {
+        (self.ptr + 1) as usize
     }
 }
 
@@ -904,23 +920,5 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(&cell.0, &SmallValue::Integer(10));
-    }
-}
-
-impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
-    pub fn from<const N: usize>(values: [T; N]) -> Self {
-        let mut stack = Self::new();
-        for value in values {
-            stack.push(value);
-        }
-        return stack;
-    }
-
-    pub fn peek_top(&self) -> Option<&T> {
-        self.at(self.ptr as usize)
-    }
-
-    pub fn len(&self) -> usize {
-        (self.ptr + 1) as usize
     }
 }

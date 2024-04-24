@@ -16,7 +16,7 @@ impl<T: PartialEq, const MAX: usize> PartialEq for StaticStack<T, MAX> {
                 return false;
             }
         }
-        return true;
+        true
     }
 }
 
@@ -32,8 +32,14 @@ impl<T: Display, const MAX: usize> Display for StaticStack<T, MAX> {
             s.push_str(&format!("{}, ", self.stack[i]));
         }
         s.push_str(&format!("{}", self.stack[self.ptr as usize]));
-        s.push_str("]");
+        s.push(']');
         write!(f, "{}", s)
+    }
+}
+
+impl<T: Default + Copy, const MAX: usize> Default for StaticStack<T, MAX> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -56,7 +62,7 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         }
         let value = self.stack[self.ptr as usize];
         self.ptr -= 1;
-        return Some(value);
+        Some(value)
     }
 
     pub fn peek_back(&self, back: usize) -> Option<T> {
@@ -64,7 +70,7 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         if idx < 0 {
             return None;
         }
-        return Some(self.stack[idx as usize]);
+        Some(self.stack[idx as usize])
     }
 
 
@@ -72,6 +78,6 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         if idx > self.ptr as usize {
             return None;
         }
-        return Some(&self.stack[idx]);
+        Some(&self.stack[idx])
     }
 }

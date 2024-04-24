@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn test_call_function() {
         let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
-            SimpleExpression::Symbol("*".to_string()).into(),
+            SimpleExpression::Symbol("*".to_string()),
             SimpleExpression::Constant(ConstantValue::Integer(11)),
             SimpleExpression::Constant(ConstantValue::Integer(12)),
         ])]);
