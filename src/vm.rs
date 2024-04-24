@@ -561,6 +561,7 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         self.at(self.ptr as usize)
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         (self.ptr + 1) as usize
     }
