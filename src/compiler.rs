@@ -268,6 +268,7 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
+                ConstantValue::Object(ObjectValue::String("+".to_string())),
                 ConstantValue::Integer(11),
                 ConstantValue::Integer(12),
                 ConstantValue::Object(ObjectValue::String("foo".to_string())),
@@ -278,15 +279,18 @@ mod tests {
         assert_eq!(
             bc.code,
             vec![
-                Op::Constant.into(),
-                0,
-                Op::Constant.into(),
-                1,
-                Op::Add.into(),
-                Op::DeclareGlobal.into(),
-                2,
                 Op::ReferenceGlobal.into(),
-                3,
+                0, // "+"
+                Op::Constant.into(),
+                1, // "11"
+                Op::Constant.into(),
+                2, // "12"
+                Op::FuncCall.into(),
+                2, // arity
+                Op::DeclareGlobal.into(),
+                3, // "foo" constant index
+                Op::ReferenceGlobal.into(),
+                4, // "foo" constant index
                 Op::DebugEnd.into(),
             ]
         );
@@ -341,7 +345,7 @@ mod tests {
                 SimpleExpression::Constant(ConstantValue::Integer(12)),
             ]),
             SimpleExpression::RegularForm(vec![
-                SimpleExpression::Symbol("+".to_string()),
+                SimpleExpression::Symbol("*".to_string()),
                 SimpleExpression::Constant(ConstantValue::Integer(13)),
                 SimpleExpression::Constant(ConstantValue::Integer(14)),
             ]),
@@ -354,6 +358,7 @@ mod tests {
                 ConstantValue::Object(ObjectValue::String("+".to_string())),
                 ConstantValue::Integer(11),
                 ConstantValue::Integer(12),
+                ConstantValue::Object(ObjectValue::String("*".to_string())),
                 ConstantValue::Integer(13),
                 ConstantValue::Integer(14),
             ]
@@ -364,27 +369,24 @@ mod tests {
             vec![
                 Op::ReferenceGlobal.into(),
                 0, // reference function symbol (outer)
-                //
-                // arg 1 (outer)
                 Op::ReferenceGlobal.into(),
                 1, // reference function symbol (inner)
-                // arg 1 (inner)
                 Op::Constant.into(),
-                2, // load arg 1 "11"
-                // arg 2 (inner)
+                2, // load arg 1: "11"
                 Op::Constant.into(),
-                3, // load arg 2 "12"
+                3, // load arg 2: "12"
                 Op::FuncCall.into(),
-                2, // call inner function with arity 2
-                //
-                // arg 2 (outer)
+                2, // call inner "+" with arity 2
+                Op::ReferenceGlobal.into(),
+                4, // load "*"
                 Op::Constant.into(),
-                4, // load arg to Mul "13"
+                5, // load arg 1: "13"
                 Op::Constant.into(),
-                5, // load arg to Mul "14"
-                Op::Mul.into(),
+                6, // load arg 2: "14"
                 Op::FuncCall.into(),
-                2, // call function "add" (outer) with arity 2
+                2, // call function "*" (outer) with arity 2
+                Op::FuncCall.into(),
+                2, // call function "+" (outer) with arity 2
                 Op::DebugEnd.into(),
             ]
         );
@@ -484,13 +486,5 @@ mod tests {
                 Op::DebugEnd.into(),
             ]
         );
-
-        // let mut vm = VM::default();
-        // vm.run(bc);
-        // let list = *vm.stack.at(0).unwrap();
-        // match list {
-        //     SmallValue::Object(o) => println!("{}", unsafe { &*o }.value),
-        //     _ => panic!("Expected list"),
-        // }
     }
 }

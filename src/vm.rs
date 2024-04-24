@@ -107,7 +107,7 @@ impl Display for SmallValue {
             SmallValue::Float(fl) => write!(f, "{}", fl),
             SmallValue::Boolean(b) => write!(f, "{}", b),
             SmallValue::Nil => write!(f, "nil"),
-            SmallValue::ObjectPtr(ptr) => write!(f, "{:?}", unsafe { &**ptr }),
+            SmallValue::ObjectPtr(ptr) => write!(f, "{}", unsafe { &**ptr }),
         }
     }
 }
@@ -235,8 +235,10 @@ impl VM {
             }))
         };
 
-        vm.globals.insert("*".to_string(), SmallValue::ObjectPtr(mul));
-        vm.globals.insert("+".to_string(), SmallValue::ObjectPtr(add));
+        vm.globals
+            .insert("*".to_string(), SmallValue::ObjectPtr(mul));
+        vm.globals
+            .insert("+".to_string(), SmallValue::ObjectPtr(add));
 
         vm
     }
@@ -246,8 +248,8 @@ impl VM {
         self.current_chunk = chunk;
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
-            println!("op: {:?}", byte);
-            println!("stack: {:?}", self.stack);
+            // println!("op: {:?}", byte);
+            // println!("stack: {}", self.stack);
             match byte {
                 Op::Constant => self.handle_constant(),
                 Op::CondJump => self.handle_cond_jump(),
@@ -274,26 +276,25 @@ impl VM {
     fn handle_cons(&mut self) {
         let mut car = self.stack.pop().unwrap();
         let mut cdr = self.stack.pop().unwrap();
-        println!("consing car({}) onto cdr({})\n\n", car, cdr);
-        std::io::stdout().flush().unwrap();
 
         let heap_obj_ptr = match cdr {
-            SmallValue::ObjectPtr(mut o) => unsafe {
-                let thing = &mut (&mut *o).value;
-                match thing /* &ObjectValue */ {
+            SmallValue::ObjectPtr(o) => unsafe {
+                let obj_val = &mut (&mut *o).value;
+
+                match obj_val {
                     ObjectValue::ConsCell(ref mut cdr_ptr) => self.allocate_value(
                         ObjectValue::ConsCell(ConsCell(car, cdr_ptr as *mut ConsCell)),
                     ),
                     _ => panic!("expected cons cell"),
                 }
             },
-            // SmallValue::Nil => unsafe {
-            //     &self.allocate_value(ObjectValue::ConsCell(ConsCell(
-            //         car,
-            //         std::ptr::null_mut(), // This is potentially not quite right, I think we
-            //                               // should maybe be allocating for SmallValue::Nil
-            //     )))
-            // },
+            SmallValue::Nil => unsafe {
+                self.allocate_value(ObjectValue::ConsCell(ConsCell(
+                    car,
+                    std::ptr::null_mut(), // This is potentially not quite right, I think we
+                                          // should maybe be allocating for SmallValue::Nil
+                )))
+            },
             other => panic!("expected object or nil, got {other}"),
         };
         self.stack.push(SmallValue::ObjectPtr(heap_obj_ptr));
@@ -473,10 +474,7 @@ impl VM {
                     _ => todo!(),
                 }
             }
-            otherwise => {
-                print!("{:?}", otherwise);
-                unimplemented!()
-            }
+            _ => todo!(),
         };
         self.stack.push(result);
         self.advance();
@@ -494,7 +492,6 @@ impl VM {
             offset = 1;
         };
         self.ip = unsafe { self.ip.add(offset) };
-        // println!("jumping {:?} forward", offset);
     }
 
     // fn handle_cond_jump(&mut self, chunk: &BytecodeChunk) {
@@ -874,7 +871,6 @@ mod tests {
         };
         assert_eq!(cell.0, SmallValue::Integer(30));
         assert_eq!(cell.1, std::ptr::null_mut());
-        println!("{}", cell);
     }
 
     #[test]
@@ -908,25 +904,8 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(&cell.0, &SmallValue::Integer(10));
-        println!("{}", cell);
-        // assert_eq!(&unsafe { *cell.1 }.0, &SmallValue::Integer(20));
     }
 }
-
-// fn print_heap(head_: *mut HeapObject) {
-//     unsafe {
-//         println!(
-//             "allocated {:?} (knowingly leaking memory for now)",
-//             (*head_).clone()
-//         );
-//         println!("heap:");
-//         let mut current = head_;
-//         while !current.is_null() {
-//             println!("- {:?}", &(*current).value);
-//             current = (*current).next;
-//         }
-//     }
-// }
 
 impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
     pub fn from<const N: usize>(values: [T; N]) -> Self {
@@ -942,6 +921,6 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
     }
 
     pub fn len(&self) -> usize {
-        self.ptr as usize + 1
+        (self.ptr + 1) as usize
     }
 }

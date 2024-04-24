@@ -28,9 +28,6 @@ fn e2e_1() {
 
     let mut vm = VM::default();
     vm.run(bc);
-    println!("\n\nTEST:");
-    println!("stack: {}", vm.stack);
-    println!("globals: {:?}", vm.globals);
 }
 
 #[test]
