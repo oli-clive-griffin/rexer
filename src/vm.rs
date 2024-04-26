@@ -1,4 +1,3 @@
-
 use crate::compiler::disassemble;
 use crate::static_stack::StaticStack;
 
@@ -16,7 +15,7 @@ pub struct VM {
     pub globals: HashMap<String, SmallValue>,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
-    constants: Vec<ConstantValue>,
+    global_constants: Vec<ConstantValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,7 +65,13 @@ pub struct Function {
 
 impl Debug for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Function(name={}, arity={} bc={})", self.name, self.arity, indent(disassemble(&self.bytecode), 2))
+        write!(
+            f,
+            "Function(name={}, arity={} bc={})",
+            self.name,
+            self.arity,
+            indent(disassemble(&self.bytecode), 2)
+        )
     }
 }
 
@@ -125,6 +130,7 @@ struct CallFrame {
     return_address: *const u8,
     stack_frame_start: usize,
     arity: usize,
+    constants: Vec<ConstantValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,7 +204,7 @@ impl VM {
             heap: std::ptr::null_mut(),
             globals: HashMap::default(),
             callframes: Vec::default(),
-            constants: Vec::default(),
+            global_constants: Vec::default(),
         };
 
         let mul = unsafe {
@@ -247,7 +253,7 @@ impl VM {
 
     pub fn run(&mut self, chunk: BytecodeChunk) {
         self.ip = chunk.code.as_ptr();
-        self.constants = chunk.constants;
+        self.global_constants = chunk.constants;
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
             // println!("op: {:?}", byte);
@@ -327,7 +333,6 @@ impl VM {
         let stack_frame_start = current_callframe.stack_frame_start;
         let offset = self.consume_next_byte_as_byte() as usize;
         let value = *self.stack.at(stack_frame_start + offset).unwrap();
-        println!("local reference returned: {}", value);
         self.stack.push(value);
         self.advance();
     }
@@ -358,7 +363,6 @@ impl VM {
 
         self.callframes.push(self.make_callframe(func_obj));
         self.ip = func_obj.bytecode.code.as_ptr();
-        self.constants = func_obj.bytecode.constants.clone(); // FIXME: this is a clone
     }
 
     fn make_callframe(&self, func_obj: &Function) -> CallFrame {
@@ -373,6 +377,7 @@ impl VM {
                 }
             },
             arity: func_obj.arity,
+            constants: func_obj.bytecode.constants.clone(),
         }
     }
 
@@ -393,9 +398,15 @@ impl VM {
         let name = match self.consume_next_byte_as_constant() {
             SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s,
-                got => panic!("expected ObjectPtr to be String for reference, got {:?}", got),
+                got => panic!(
+                    "expected ObjectPtr to be String for reference, got {:?}",
+                    got
+                ),
             },
-            constant_val => panic!("expected constant to be ObjectPtr(String) for reference, got constant {:?}", constant_val),
+            constant_val => panic!(
+                "expected constant to be ObjectPtr(String) for reference, got constant {:?}",
+                constant_val
+            ),
         };
         let global = *self.globals.get(name).unwrap_or_else(|| {
             self.runtime_error(format!("undefined global variable: {}", name).as_str());
@@ -511,18 +522,25 @@ impl VM {
             self.ip = self.ip.add(1);
             let constant_idx = *self.ip as usize;
 
-            match self.constants[constant_idx].clone() {
+            match self.get_constant(constant_idx) {
                 // IMPORTANT: clone
-                ConstantValue::Integer(v) => SmallValue::Integer(v),
-                ConstantValue::Float(v) => SmallValue::Float(v),
-                ConstantValue::Boolean(v) => SmallValue::Boolean(v),
+                ConstantValue::Integer(v) => SmallValue::Integer(v.clone()),
+                ConstantValue::Float(v) => SmallValue::Float(v.clone()),
+                ConstantValue::Boolean(v) => SmallValue::Boolean(v.clone()),
                 ConstantValue::Nil => SmallValue::Nil,
                 ConstantValue::Object(value) => {
-                    let obj_ptr = self.allocate_value(value);
+                    let obj_ptr = self.allocate_value(value.clone());
                     SmallValue::ObjectPtr(obj_ptr)
                 }
             }
         }
+    }
+
+    fn get_constant(&self, idx: usize) -> &ConstantValue {
+        if let Some(frame) = &self.callframes.last() {
+            return &frame.constants[idx];
+        };
+        &self.global_constants[idx]
     }
 
     fn consume_next_byte_as_byte(&mut self) -> u8 {
@@ -553,10 +571,12 @@ impl VM {
     }
 }
 
-
 fn indent(s: String, level: usize) -> String {
     let indent = "  ".repeat(level);
-    s.lines().map(|line| format!("{}{}", indent, line)).collect::<Vec<String>>().join("\n")
+    s.lines()
+        .map(|line| format!("{}{}", indent, line))
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 #[cfg(test)]

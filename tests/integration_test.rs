@@ -101,6 +101,8 @@ fn actually_e2e() {
 
 (fn (c d e) (+ d e))
 
+(define foo 10)
+
 (* (a true) (c 2 3)
 "#
     .to_owned();
@@ -108,7 +110,6 @@ fn actually_e2e() {
     let tokens = rusp::lexer::lex(&src).unwrap();
     let ast = rusp::parser::parse(tokens).unwrap();
     let bc = compile_sexprs(ast.expressions);
-    println!("BYTECODE:\n{}\n\n", disassemble(&bc));
 
     let mut vm = VM::default();
     vm.run(bc);

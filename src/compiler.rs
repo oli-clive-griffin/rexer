@@ -155,18 +155,25 @@ fn compile_expression(
             }
             Sexpr::String(_) => todo!(),
             Sexpr::Bool(_) => todo!(),
-            Sexpr::Function { parameters: _, body: _ } => todo!(),
-            Sexpr::Macro { parameters: _, body: _ } => todo!(),
+            Sexpr::Function {
+                parameters: _,
+                body: _,
+            } => todo!(),
+            Sexpr::Macro {
+                parameters: _,
+                body: _,
+            } => todo!(),
             Sexpr::BuiltIn(_) => todo!(),
             Sexpr::CommaUnquote(_) => todo!(),
             Sexpr::Nil => todo!(),
         },
         SimpleExpression::GlobalFunctionDeclaration(func_dec) => {
             // jank way of doing it for now:
-            
+
             // make function object
             let name = func_dec.name.clone();
-            let function_obj = ConstantValue::Object(ObjectValue::Function(compile_function(*func_dec)));
+            let function_obj =
+                ConstantValue::Object(ObjectValue::Function(compile_function(*func_dec)));
 
             // reference constant function object on stack
             code.push(Op::Constant.into());
@@ -189,7 +196,7 @@ fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
     for expr in declaration.body {
         compile_expression(expr, &mut code, &mut constants, &mut locals);
     }
-    
+
     code.push(Op::Return.into());
 
     Function {
@@ -200,9 +207,7 @@ fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
 }
 
 pub fn compile_sexprs(sexprs: Vec<Sexpr>) -> BytecodeChunk {
-    // println!("sexprs: {:#?}", sexprs);
     let expressions = sexprs.iter().map(map).collect::<Vec<SimpleExpression>>();
-    // println!("expressions: {:#?}", expressions);
     compile_expressions(expressions)
 }
 
@@ -331,10 +336,8 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<SimpleExpression> {
                     },
                 )));
             }
-            _ => {
-                println!("head: {:?} was not a special form", head);
-            }
-        };
+            _ => {}
+        }
     }
     None
 }
@@ -382,7 +385,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                     ConstantValue::Object(o) => match o {
                         ObjectValue::String(s) => s,
                         got => panic!("expected string for global name, got {:?}", got),
-                    }
+                    },
                     got => panic!("expected object for global name, got {:?}", got),
                 };
 
@@ -396,17 +399,16 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                     ConstantValue::Object(o) => match o {
                         ObjectValue::String(s) => s,
                         got => panic!("expected string for global name, got {:?}", got),
-                    }
+                    },
                     got => panic!("expected object for global name, got {:?}", got),
                 };
-                
+
                 format!("ReferenceGlobal\n  name: {name}")
             }
             Op::ReferenceLocal => {
                 pc += 1;
                 let idx = bc.code[pc];
                 format!("ReferenceLocal\n  idx: {idx}")
-            
             }
         };
         lines.push_str(line.as_str());
@@ -732,4 +734,3 @@ mod tests {
         );
     }
 }
-        
