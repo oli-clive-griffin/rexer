@@ -7,7 +7,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
 use std::default;
-use std::fmt::{format, Debug, Display};
+use std::fmt::{Debug, Display};
 
 const STACK_SIZE: usize = 4096;
 pub struct VM {
@@ -276,8 +276,8 @@ impl VM {
     // the following are all in the wrong order and I don't care
 
     fn handle_cons(&mut self) {
-        let mut car = self.stack.pop().unwrap();
-        let mut cdr = self.stack.pop().unwrap();
+        let car = self.stack.pop().unwrap();
+        let cdr = self.stack.pop().unwrap();
 
         let heap_obj_ptr = match cdr {
             SmallValue::ObjectPtr(o) => unsafe {

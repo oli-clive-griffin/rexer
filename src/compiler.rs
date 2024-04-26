@@ -194,7 +194,7 @@ fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
 
     Function {
         name: declaration.name,
-        arity: declaration.parameters.len() as usize,
+        arity: declaration.parameters.len(),
         bytecode: Box::new(BytecodeChunk::new(code, constants)),
     }
 }
@@ -224,9 +224,9 @@ pub fn map(sexpr: &Sexpr) -> SimpleExpression {
         Sexpr::String(str) => {
             SimpleExpression::Constant(ConstantValue::Object(ObjectValue::String(str.clone())))
         }
-        Sexpr::Bool(bool) => SimpleExpression::Constant(ConstantValue::Boolean(bool.clone())),
-        Sexpr::Int(i) => SimpleExpression::Constant(ConstantValue::Integer(i.clone())),
-        Sexpr::Float(f) => SimpleExpression::Constant(ConstantValue::Float(f.clone())),
+        Sexpr::Bool(bool) => SimpleExpression::Constant(ConstantValue::Boolean(*bool)),
+        Sexpr::Int(i) => SimpleExpression::Constant(ConstantValue::Integer(*i)),
+        Sexpr::Float(f) => SimpleExpression::Constant(ConstantValue::Float(*f)),
         Sexpr::Function {
             parameters: _,
             body: _,
@@ -727,9 +727,9 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             }
         };
         lines.push_str(line.as_str());
-        lines.push_str("\n");
+        lines.push('\n');
         pc += 1;
     }
-    return lines;
+    lines
 }
         
