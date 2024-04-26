@@ -1,5 +1,7 @@
 use rusp::{
-    compiler::{compile_program, SimpleExpression}, sexpr::Sexpr, vm::{ConstantValue, ObjectValue, SmallValue, VM}
+    compiler::{compile_expressions, compile_sexprs, disassemble, SimpleExpression},
+    sexpr::Sexpr,
+    vm::{ConstantValue, ObjectValue, SmallValue, VM},
 };
 
 #[test]
@@ -24,7 +26,7 @@ fn e2e_1() {
         })),
     ];
 
-    let bc = compile_program(program);
+    let bc = compile_expressions(program);
 
     let mut vm = VM::default();
     vm.run(bc);
@@ -42,7 +44,7 @@ fn e2e_2() {
         SimpleExpression::Constant(ConstantValue::Integer(3)),
     ])];
 
-    let bc = compile_program(program);
+    let bc = compile_expressions(program);
 
     let mut vm = VM::default();
 
@@ -62,7 +64,7 @@ fn e2e_3() {
         SimpleExpression::Constant(ConstantValue::Integer(4)),
     ])];
 
-    let bc = compile_program(program);
+    let bc = compile_expressions(program);
 
     let mut vm = VM::default();
 
@@ -71,7 +73,7 @@ fn e2e_3() {
 
 #[test]
 fn e2e_4() {
-    let bc = compile_program(vec![SimpleExpression::Quote(Sexpr::List {
+    let bc = compile_expressions(vec![SimpleExpression::Quote(Sexpr::List {
         quasiquote: false,
         sexprs: vec![
             Sexpr::Int(10),
@@ -90,4 +92,27 @@ fn e2e_4() {
         SmallValue::ObjectPtr(o) => println!("{}", unsafe { &*o }.value),
         _ => panic!("Expected list"),
     }
+}
+
+#[test]
+fn actually_e2e() {
+    let src = r#"
+(fn (a b) ((if b * +) 2 3))
+
+(fn (c d e) (+ d e))
+
+(* (a true) (c 2 3)
+"#
+    .to_owned();
+
+    let tokens = rusp::lexer::lex(&src).unwrap();
+    let ast = rusp::parser::parse(tokens).unwrap();
+    let bc = compile_sexprs(ast.expressions);
+    println!("BYTECODE:\n{}\n\n", disassemble(&bc));
+
+    let mut vm = VM::default();
+    vm.run(bc);
+    println!("\n\nTEST:");
+    println!("stack: {}", vm.stack);
+    println!("globals: {:?}", vm.globals);
 }

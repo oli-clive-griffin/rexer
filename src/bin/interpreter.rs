@@ -1,13 +1,6 @@
-mod builtins;
-mod compiler;
-mod evaluator;
-mod lexer;
-mod parser;
-mod sexpr;
-mod vm;
-mod static_stack;
-
 use std::io::Write;
+
+use rusp::{evaluator, lexer, parser, sexpr};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

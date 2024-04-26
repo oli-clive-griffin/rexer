@@ -1,8 +1,7 @@
-#![allow(unused, dead_code)]
-
-use std::collections::HashMap;
-
-use crate::{sexpr::Sexpr, vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op}};
+use crate::{
+    sexpr::Sexpr,
+    vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op},
+};
 
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
@@ -21,12 +20,21 @@ pub enum SimpleExpression {
     },
     Symbol(String),
     DebugPrint(Box<SimpleExpression>),
+    GlobalFunctionDeclaration(Box<GlobalFunctionDeclaration>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct GlobalFunctionDeclaration {
+    name: String,
+    parameters: Vec<String>,
+    body: Vec<SimpleExpression>,
 }
 
 fn compile_expression(
     expression: SimpleExpression,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
+    locals: &mut Vec<String>,
 ) {
     match expression {
         SimpleExpression::Constant(value) => {
@@ -40,7 +48,7 @@ fn compile_expression(
             else_,
         } => {
             // IF
-            compile_expression(*condition, code, constants);
+            compile_expression(*condition, code, constants, locals);
 
             // skip to "then"
             code.push(Op::CondJump.into());
@@ -48,7 +56,7 @@ fn compile_expression(
             let then_jump_idx = code.len() - 1;
 
             // ELSE
-            compile_expression(*else_, code, constants);
+            compile_expression(*else_, code, constants, locals);
 
             // skip to end
             code.push(Op::Jump.into());
@@ -59,39 +67,36 @@ fn compile_expression(
             // THEN
             let then_jump = (code.len() - then_jump_idx) as u8;
             code[then_jump_idx] = then_jump;
-            compile_expression(*then, code, constants);
+            compile_expression(*then, code, constants, locals);
 
             // FINISH
             let finish_jump = (code.len() - finish_jump_idx) as u8;
             code[finish_jump_idx] = finish_jump
         }
         SimpleExpression::DeclareGlobal { name, value } => {
-            compile_expression(*value, code, constants);
+            compile_expression(*value, code, constants, locals);
             code.push(Op::DeclareGlobal.into());
             constants.push(ConstantValue::Object(ObjectValue::String(name)));
             code.push(constants.len() as u8 - 1);
         }
         SimpleExpression::Symbol(symbol) => {
+            // local / function argument
+            let local_idx = locals.iter().position(|x| x == &symbol);
+            if let Some(idx) = local_idx {
+                code.push(Op::ReferenceLocal.into());
+                code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
+                return;
+            }
+
+            // fall back to global
             code.push(Op::ReferenceGlobal.into());
+            // this can be optimized by reusing the same constant for the same symbol
+            // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
             constants.push(ConstantValue::Object(ObjectValue::String(symbol)));
             code.push(constants.len() as u8 - 1);
-
-            // let constant_idx = constants
-            //     .iter()
-            //     .position(|x| match x {
-            //         ConstantsValue::Object(ObjectValue::String(s)) => s == &symbol,
-            //         _ => false,
-            //     });
-
-            // if let Some(idx) = constant_idx {
-            //     code.push(Op::ReferenceGlobal.into());
-            //     code.push(idx as u8);
-            //     return;
-            // }
-            // todo!("local variable lookup not implemented")
         }
         SimpleExpression::DebugPrint(expr) => {
-            compile_expression(*expr, code, constants);
+            compile_expression(*expr, code, constants, locals);
             code.push(Op::DebugPrint.into());
         }
         SimpleExpression::RegularForm(exprs) => {
@@ -106,7 +111,7 @@ fn compile_expression(
             };
 
             for expr in exprs {
-                compile_expression(expr, code, constants);
+                compile_expression(expr, code, constants, locals);
             }
 
             code.push(Op::FuncCall.into());
@@ -128,6 +133,7 @@ fn compile_expression(
                         SimpleExpression::Quote(expr.clone()), //
                         code,
                         constants,
+                        locals,
                     );
                     code.push(Op::Cons.into())
                 }
@@ -149,23 +155,188 @@ fn compile_expression(
             }
             Sexpr::String(_) => todo!(),
             Sexpr::Bool(_) => todo!(),
-            Sexpr::Function { parameters, body } => todo!(),
-            Sexpr::Macro { parameters, body } => todo!(),
+            Sexpr::Function { parameters: _, body: _ } => todo!(),
+            Sexpr::Macro { parameters: _, body: _ } => todo!(),
             Sexpr::BuiltIn(_) => todo!(),
             Sexpr::CommaUnquote(_) => todo!(),
             Sexpr::Nil => todo!(),
         },
+        SimpleExpression::GlobalFunctionDeclaration(func_dec) => {
+            // jank way of doing it for now:
+            
+            // make function object
+            let name = func_dec.name.clone();
+            let function_obj = ConstantValue::Object(ObjectValue::Function(compile_function(*func_dec)));
+
+            // reference constant function object on stack
+            code.push(Op::Constant.into());
+            constants.push(function_obj);
+            code.push(constants.len() as u8 - 1);
+
+            // declare top of stack as global
+            code.push(Op::DeclareGlobal.into());
+            constants.push(ConstantValue::Object(ObjectValue::String(name)));
+            code.push(constants.len() as u8 - 1);
+        }
     }
 }
 
-pub fn compile_program(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
+fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
+    let mut code = vec![];
+    let mut constants = vec![];
+    let mut locals = declaration.parameters.clone();
+
+    for expr in declaration.body {
+        compile_expression(expr, &mut code, &mut constants, &mut locals);
+    }
+    
+    code.push(Op::Return.into());
+
+    Function {
+        name: declaration.name,
+        arity: declaration.parameters.len() as usize,
+        bytecode: Box::new(BytecodeChunk::new(code, constants)),
+    }
+}
+
+pub fn compile_sexprs(sexprs: Vec<Sexpr>) -> BytecodeChunk {
+    // println!("sexprs: {:#?}", sexprs);
+    let expressions = sexprs.iter().map(map).collect::<Vec<SimpleExpression>>();
+    // println!("expressions: {:#?}", expressions);
+    compile_expressions(expressions)
+}
+
+pub fn compile_expressions(expressions: Vec<SimpleExpression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
     let mut constants: Vec<ConstantValue> = vec![];
+    let mut locals: Vec<String> = vec![];
     for expression in expressions {
-        compile_expression(expression, &mut code, &mut constants);
+        compile_expression(expression, &mut code, &mut constants, &mut locals);
     }
     code.push(Op::DebugEnd.into());
     BytecodeChunk::new(code, constants)
+}
+
+/// DRAFT
+pub fn map(sexpr: &Sexpr) -> SimpleExpression {
+    match sexpr {
+        Sexpr::Symbol(sym) => SimpleExpression::Symbol(sym.clone()),
+        Sexpr::String(str) => {
+            SimpleExpression::Constant(ConstantValue::Object(ObjectValue::String(str.clone())))
+        }
+        Sexpr::Bool(bool) => SimpleExpression::Constant(ConstantValue::Boolean(bool.clone())),
+        Sexpr::Int(i) => SimpleExpression::Constant(ConstantValue::Integer(i.clone())),
+        Sexpr::Float(f) => SimpleExpression::Constant(ConstantValue::Float(f.clone())),
+        Sexpr::Function {
+            parameters: _,
+            body: _,
+        } => {
+            panic!("raw function node should not be present in this context")
+        }
+        Sexpr::Macro {
+            parameters: _,
+            body: _,
+        } => {
+            panic!("raw macro node should not be present in this context")
+        }
+        Sexpr::BuiltIn(_) => {
+            todo!();
+        }
+        Sexpr::CommaUnquote(_) => {
+            todo!("unquote not implemented")
+        }
+        Sexpr::Nil => SimpleExpression::Constant(ConstantValue::Nil),
+        Sexpr::List { quasiquote, sexprs } => {
+            if *quasiquote {
+                todo!("quasiquote not implemented")
+            }
+
+            if sexprs.is_empty() {
+                panic!("empty unquoted list")
+            }
+            if let Some(special_form) = map_to_special_form(sexprs) {
+                return special_form;
+            }
+            SimpleExpression::RegularForm(sexprs.iter().map(map).collect())
+        }
+    }
+}
+
+fn map_to_special_form(sexprs: &Vec<Sexpr>) -> Option<SimpleExpression> {
+    let head = sexprs.first().unwrap();
+
+    if let Sexpr::Symbol(sym) = head {
+        match sym.as_str() {
+            "if" => {
+                return Some(SimpleExpression::If {
+                    condition: Box::new(map(&sexprs[1])),
+                    then: Box::new(map(&sexprs[2])),
+                    else_: Box::new(map(&sexprs[3])),
+                });
+            }
+            "set!" => {
+                let name = match &sexprs[1] {
+                    Sexpr::Symbol(s) => s,
+                    _ => panic!("set! expects symbol as first argument"),
+                };
+                return Some(SimpleExpression::DeclareGlobal {
+                    name: name.to_string(),
+                    value: Box::new(map(&sexprs[2])),
+                });
+            }
+            "quote" => {
+                if sexprs.len() != 2 {
+                    panic!("quote expects 1 argument")
+                }
+                return Some(SimpleExpression::Quote(sexprs[1].clone()));
+            }
+            "debug-print" => {
+                if sexprs.len() != 2 {
+                    panic!("debug-print expects 1 argument")
+                }
+                return Some(SimpleExpression::DebugPrint(Box::new(map(&sexprs[1]))));
+            }
+            "fn" => {
+                let (name, parameters) = match &sexprs[1] {
+                    Sexpr::List { quasiquote, sexprs } => {
+                        if *quasiquote {
+                            todo!("inappropriate quasiquote")
+                        }
+                        let name = match &sexprs[0] {
+                            Sexpr::Symbol(s) => s.clone(),
+                            _ => panic!("expected symbol for function name"),
+                        };
+                        let parameters = sexprs[1..]
+                            .iter()
+                            .map(|sexpr| match sexpr {
+                                Sexpr::Symbol(s) => s.clone(),
+                                _ => panic!("expected symbol for parameter"),
+                            })
+                            .collect();
+                        (name, parameters)
+                    }
+                    got => panic!(
+                        "expected list for function signature declaration, got {:?}",
+                        got
+                    ),
+                };
+
+                let body = sexprs[2..].iter().map(map).collect();
+
+                return Some(SimpleExpression::GlobalFunctionDeclaration(Box::new(
+                    GlobalFunctionDeclaration {
+                        parameters,
+                        body,
+                        name,
+                    },
+                )));
+            }
+            _ => {
+                println!("head: {:?} was not a special form", head);
+            }
+        };
+    }
+    None
 }
 
 #[cfg(test)]
@@ -186,7 +357,7 @@ mod tests {
             then: Box::new(SimpleExpression::Constant(ConstantValue::Integer(12))),
             else_: Box::new(SimpleExpression::Constant(ConstantValue::Integer(13))),
         };
-        let bc = compile_program(vec![expression]);
+        let bc = compile_expressions(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -224,7 +395,7 @@ mod tests {
             name: "foo".to_string(),
             value: Box::new(SimpleExpression::Constant(ConstantValue::Integer(11))),
         };
-        let bc = compile_program(vec![expression]);
+        let bc = compile_expressions(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -263,7 +434,7 @@ mod tests {
             SimpleExpression::Symbol("foo".to_string()),
         ];
 
-        let bc = compile_program(program);
+        let bc = compile_expressions(program);
 
         assert_eq!(
             bc.constants,
@@ -304,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_call_function() {
-        let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
+        let bc = compile_expressions(vec![SimpleExpression::RegularForm(vec![
             SimpleExpression::Symbol("*".to_string()),
             SimpleExpression::Constant(ConstantValue::Integer(11)),
             SimpleExpression::Constant(ConstantValue::Integer(12)),
@@ -337,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_function_with_computed_arguments() {
-        let bc = compile_program(vec![SimpleExpression::RegularForm(vec![
+        let bc = compile_expressions(vec![SimpleExpression::RegularForm(vec![
             SimpleExpression::Symbol("+".to_string()),
             SimpleExpression::RegularForm(vec![
                 SimpleExpression::Symbol("+".to_string()),
@@ -399,13 +570,9 @@ mod tests {
 
     #[test]
     fn test_cons() {
-        let bc = compile_program(vec![SimpleExpression::Quote(Sexpr::List {
+        let bc = compile_expressions(vec![SimpleExpression::Quote(Sexpr::List {
             quasiquote: false,
-            sexprs: vec![
-                Sexpr::Int(1),
-                Sexpr::Int(2),
-                Sexpr::Int(3),
-            ],
+            sexprs: vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3)],
         })]);
 
         assert_eq!(
@@ -439,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_cons_nested() {
-        let bc = compile_program(vec![SimpleExpression::Quote(Sexpr::List {
+        let bc = compile_expressions(vec![SimpleExpression::Quote(Sexpr::List {
             quasiquote: false,
             sexprs: vec![
                 Sexpr::Int(10),
@@ -462,7 +629,7 @@ mod tests {
                 ConstantValue::Integer(10),
             ]
         );
-        
+
         assert_eq!(
             bc.code,
             vec![
@@ -488,3 +655,81 @@ mod tests {
         );
     }
 }
+
+pub fn disassemble(bc: &BytecodeChunk) -> String {
+    let mut pc = 0;
+    let mut lines = "".to_string();
+    while pc < bc.code.len() {
+        let op: Op = bc.code[pc].try_into().expect("invalid opcode");
+        let line: String = match op {
+            Op::Add => "Add".to_string(),
+            Op::Sub => "Sub".to_string(),
+            Op::Mul => "Mul".to_string(),
+            Op::Div => "Div".to_string(),
+            Op::Neg => "Neg".to_string(),
+            Op::Return => "Return".to_string(),
+            Op::Cons => "Cons".to_string(),
+            Op::DebugEnd => "DebugEnd".to_string(),
+            Op::DebugPrint => "DebugPrint".to_string(),
+            Op::Constant => {
+                pc += 1;
+                let idx = bc.code[pc];
+                // format!("Constant idx: {idx} val: {:?}", bc.constants[idx as usize])
+                format!("Constant\n  val: {:?}", bc.constants[idx as usize])
+            }
+            Op::Jump => {
+                pc += 1;
+                let offset = bc.code[pc];
+                format!("Jump\n  offset: {offset}")
+            }
+            Op::CondJump => {
+                pc += 1;
+                let offset = bc.code[pc];
+                format!("CondJump\n  offset: {offset}")
+            }
+            Op::FuncCall => {
+                pc += 1;
+                let arity = bc.code[pc];
+                format!("FuncCall\n  arity: {arity}")
+            }
+            Op::DeclareGlobal => {
+                pc += 1;
+                let name_idx = bc.code[pc];
+                let name = match &bc.constants[name_idx as usize] {
+                    ConstantValue::Object(o) => match o {
+                        ObjectValue::String(s) => s,
+                        got => panic!("expected string for global name, got {:?}", got),
+                    }
+                    got => panic!("expected object for global name, got {:?}", got),
+                };
+
+                // value is on the stack
+                format!("DeclareGlobal\n  name: {name} (value on stack)")
+            }
+            Op::ReferenceGlobal => {
+                pc += 1;
+                let name_idx = bc.code[pc];
+                let name = match &bc.constants[name_idx as usize] {
+                    ConstantValue::Object(o) => match o {
+                        ObjectValue::String(s) => s,
+                        got => panic!("expected string for global name, got {:?}", got),
+                    }
+                    got => panic!("expected object for global name, got {:?}", got),
+                };
+                
+                format!("ReferenceGlobal\n  name: {name}")
+            }
+            Op::ReferenceLocal => {
+                pc += 1;
+                let idx = bc.code[pc];
+                format!("ReferenceLocal\n  idx: {idx}")
+            
+            }
+        };
+        lines.push_str(line.as_str());
+        lines.push_str("\n");
+        pc += 1;
+    }
+    return lines;
+}
+        

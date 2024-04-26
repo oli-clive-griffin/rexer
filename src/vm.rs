@@ -1,18 +1,13 @@
-#![allow(unused, dead_code)]
 
-use crate::sexpr::Sexpr;
+use crate::compiler::disassemble;
 use crate::static_stack::StaticStack;
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
 use std::default;
-use std::fmt::{format, Display};
-use std::hash::Hash;
-use std::io::Write;
-use std::ops::Deref;
-use std::panic::PanicInfo;
+use std::fmt::{format, Debug, Display};
 
 const STACK_SIZE: usize = 4096;
 pub struct VM {
@@ -21,7 +16,7 @@ pub struct VM {
     pub globals: HashMap<String, SmallValue>,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
-    current_chunk: BytecodeChunk,
+    constants: Vec<ConstantValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,12 +57,19 @@ impl Display for ObjectValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    arity: usize,
-    bytecode: Box<BytecodeChunk>,
+    pub arity: usize,
+    pub bytecode: Box<BytecodeChunk>,
 }
+
+impl Debug for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Function(name={}, arity={} bc={})", self.name, self.arity, indent(disassemble(&self.bytecode), 2))
+    }
+}
+
 impl Function {
     pub fn new(name: String, arity: usize, bytecode: BytecodeChunk) -> Self {
         Function {
@@ -196,7 +198,7 @@ impl VM {
             heap: std::ptr::null_mut(),
             globals: HashMap::default(),
             callframes: Vec::default(),
-            current_chunk: BytecodeChunk::new(vec![], vec![]),
+            constants: Vec::default(),
         };
 
         let mul = unsafe {
@@ -245,7 +247,7 @@ impl VM {
 
     pub fn run(&mut self, chunk: BytecodeChunk) {
         self.ip = chunk.code.as_ptr();
-        self.current_chunk = chunk;
+        self.constants = chunk.constants;
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
             // println!("op: {:?}", byte);
@@ -323,9 +325,9 @@ impl VM {
             .last()
             .expect("expected a call frame for a local variable");
         let stack_frame_start = current_callframe.stack_frame_start;
-        let arity = current_callframe.arity;
         let offset = self.consume_next_byte_as_byte() as usize;
         let value = *self.stack.at(stack_frame_start + offset).unwrap();
+        println!("local reference returned: {}", value);
         self.stack.push(value);
         self.advance();
     }
@@ -356,6 +358,7 @@ impl VM {
 
         self.callframes.push(self.make_callframe(func_obj));
         self.ip = func_obj.bytecode.code.as_ptr();
+        self.constants = func_obj.bytecode.constants.clone(); // FIXME: this is a clone
     }
 
     fn make_callframe(&self, func_obj: &Function) -> CallFrame {
@@ -390,12 +393,14 @@ impl VM {
         let name = match self.consume_next_byte_as_constant() {
             SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s,
-                _ => panic!("expected string value for reference"),
+                got => panic!("expected ObjectPtr to be String for reference, got {:?}", got),
             },
-            _ => panic!("expected string value for reference"),
+            constant_val => panic!("expected constant to be ObjectPtr(String) for reference, got constant {:?}", constant_val),
         };
-        let stack_val = *self.globals.get(name).unwrap();
-        self.stack.push(stack_val);
+        let global = *self.globals.get(name).unwrap_or_else(|| {
+            self.runtime_error(format!("undefined global variable: {}", name).as_str());
+        });
+        self.stack.push(global); // this is copying right?
         self.advance();
     }
 
@@ -506,7 +511,7 @@ impl VM {
             self.ip = self.ip.add(1);
             let constant_idx = *self.ip as usize;
 
-            match self.current_chunk.constants[constant_idx].clone() {
+            match self.constants[constant_idx].clone() {
                 // IMPORTANT: clone
                 ConstantValue::Integer(v) => SmallValue::Integer(v),
                 ConstantValue::Float(v) => SmallValue::Float(v),
@@ -543,27 +548,8 @@ impl VM {
         obj_ptr
     }
 
-    fn runtime_error(&self, message: &str) {
+    fn runtime_error(&self, message: &str) -> ! {
         panic!("Runtime error: {}", message);
-    }
-}
-
-impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
-    pub fn from<const N: usize>(values: [T; N]) -> Self {
-        let mut stack = Self::new();
-        for value in values {
-            stack.push(value);
-        }
-        stack
-    }
-
-    pub fn peek_top(&self) -> Option<&T> {
-        self.at(self.ptr as usize)
-    }
-
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
-        (self.ptr + 1) as usize
     }
 }
 
@@ -922,4 +908,29 @@ mod tests {
         };
         assert_eq!(&cell.0, &SmallValue::Integer(10));
     }
+
+    impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
+        pub fn from<const N: usize>(values: [T; N]) -> Self {
+            let mut stack = Self::new();
+            for value in values {
+                stack.push(value);
+            }
+            stack
+        }
+
+        pub fn peek_top(&self) -> Option<&T> {
+            self.at(self.ptr as usize)
+        }
+
+        #[allow(clippy::len_without_is_empty)]
+        pub fn len(&self) -> usize {
+            (self.ptr + 1) as usize
+        }
+    }
+}
+
+
+fn indent(s: String, level: usize) -> String {
+    let indent = "  ".repeat(level);
+    s.lines().map(|line| format!("{}{}", indent, line)).collect::<Vec<String>>().join("\n")
 }
