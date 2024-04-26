@@ -553,6 +553,12 @@ impl VM {
     }
 }
 
+
+fn indent(s: String, level: usize) -> String {
+    let indent = "  ".repeat(level);
+    s.lines().map(|line| format!("{}{}", indent, line)).collect::<Vec<String>>().join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,10 +933,4 @@ mod tests {
             (self.ptr + 1) as usize
         }
     }
-}
-
-
-fn indent(s: String, level: usize) -> String {
-    let indent = "  ".repeat(level);
-    s.lines().map(|line| format!("{}{}", indent, line)).collect::<Vec<String>>().join("\n")
 }
