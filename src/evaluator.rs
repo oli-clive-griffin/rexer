@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::iter;
 
-use crate::builtins::BUILTINTS;
+use crate::builtins::BUILT_INS;
 use crate::parser::Ast;
 use crate::sexpr::Sexpr;
 
@@ -15,7 +15,7 @@ impl Scope {
     fn new() -> Scope {
         Scope {
             bindings: HashMap::from_iter(
-                BUILTINTS.map(|builtin| (builtin.symbol.to_string(), Sexpr::BuiltIn(builtin))),
+                BUILT_INS.map(|builtin| (builtin.symbol.to_string(), Sexpr::BuiltIn(builtin))),
             ),
         }
     }

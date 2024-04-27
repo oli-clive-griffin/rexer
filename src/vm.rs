@@ -10,9 +10,9 @@ use std::fmt::{Debug, Display};
 
 const STACK_SIZE: usize = 4096;
 pub struct VM {
+    pub stack: StaticStack<SmallValue, STACK_SIZE>, // for testing ugh
+    pub globals: HashMap<String, SmallValue>, // same, // TODO make interface nicer
     ip: *const u8,
-    pub stack: StaticStack<SmallValue, STACK_SIZE>,
-    pub globals: HashMap<String, SmallValue>,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
     global_constants: Vec<ConstantValue>,
@@ -36,7 +36,8 @@ impl Display for ConsCell {
 
         let cdr = if self.1.is_null() {
             "nil".to_string()
-        } else { // would be nice to actually use a ptr to a Nil value here
+        } else {
+            // would be nice to actually use a ptr to a Nil value here
             format!("{}", unsafe { &*self.1 })
         };
 
@@ -58,9 +59,9 @@ impl Display for ObjectValue {
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
-    pub name: String,
-    pub arity: usize,
-    pub bytecode: Box<BytecodeChunk>,
+    name: String,
+    arity: usize,
+    bytecode: Box<BytecodeChunk>,
 }
 
 impl Debug for Function {
@@ -88,7 +89,7 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapObject {
     next: *mut HeapObject,
-    pub value: ObjectValue,
+    value: ObjectValue,
     // marked: bool,
 }
 
@@ -249,7 +250,7 @@ fn builtins() -> Vec<Function> {
 }
 
 impl VM {
-    pub fn new() -> VM {
+    fn new() -> VM {
         let mut vm = VM {
             ip: std::ptr::null_mut(),
             stack: StaticStack::new(),
@@ -972,21 +973,23 @@ mod tests {
         assert_eq!(&cell.0, &SmallValue::Integer(10));
     }
 
-    impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
-        pub fn from<const N: usize>(values: [T; N]) -> Self {
+    impl<T: Default + Copy, const MAX: usize, const N: usize> From<[T; N]> for StaticStack<T, MAX> {
+        fn from(values: [T; N]) -> Self {
             let mut stack = Self::new();
             for value in values {
                 stack.push(value);
             }
             stack
         }
+    }
 
-        pub fn peek_top(&self) -> Option<&T> {
+    impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
+        fn peek_top(&self) -> Option<&T> {
             self.at(self.ptr as usize)
         }
 
         #[allow(clippy::len_without_is_empty)]
-        pub fn len(&self) -> usize {
+        fn len(&self) -> usize {
             (self.ptr + 1) as usize
         }
     }

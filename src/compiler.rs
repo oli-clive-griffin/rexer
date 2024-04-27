@@ -1,5 +1,6 @@
 use crate::{
-    lexer, parser,
+    lexer,
+    parser::{self, Ast},
     sexpr::Sexpr,
     structural_parser::structure_sexpr,
     vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op},
@@ -206,16 +207,17 @@ fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
 
     code.push(Op::Return.into());
 
-    Function {
-        name: declaration.name,
-        arity: declaration.parameters.len(),
-        bytecode: Box::new(BytecodeChunk::new(code, constants)),
-    }
+    Function::new(
+        declaration.name,
+        declaration.parameters.len(),
+        BytecodeChunk::new(code, constants),
+    )
 }
 
-pub fn compile_sexprs(sexprs: Vec<Sexpr>) -> BytecodeChunk {
+fn compile_ast(ast: Ast) -> BytecodeChunk {
     // let sexprs = macro_expand(sexprs);
-    let expressions = sexprs
+    let expressions = ast
+        .expressions
         .iter()
         .map(structure_sexpr)
         .collect::<Vec<Expression>>();
@@ -223,7 +225,7 @@ pub fn compile_sexprs(sexprs: Vec<Sexpr>) -> BytecodeChunk {
     compile_expressions(expressions)
 }
 
-pub fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
+fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
     let mut constants: Vec<ConstantValue> = vec![];
     let mut locals: Vec<String> = vec![];
@@ -245,7 +247,7 @@ pub fn compile(src: &String) -> BytecodeChunk {
         std::process::exit(1);
     });
 
-    compile_sexprs(ast.expressions)
+    compile_ast(ast)
 }
 
 #[cfg(test)]
@@ -476,7 +478,6 @@ mod tests {
         vm.run(bc);
         assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(205)]));
     }
-
     #[test]
     fn test_cons() {
         let bc = compile_expressions(vec![Expression::Quote(Sexpr::List {

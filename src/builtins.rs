@@ -2,7 +2,6 @@ use crate::sexpr::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltIn {
-    // pub name: &'static str,
     pub symbol: &'static str,
     eval: fn(&[Sexpr]) -> Result<Sexpr, String>,
 }
@@ -234,7 +233,7 @@ const LT: BuiltIn = BuiltIn {
     }
 };
 
-pub const BUILTINTS: [BuiltIn; 14] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT];
+pub const BUILT_INS: [BuiltIn; 14] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT];
 
 #[cfg(test)]
 mod tests {
