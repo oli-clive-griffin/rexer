@@ -1,8 +1,11 @@
-pub mod builtins;
+mod builtins;
 pub mod compiler;
-pub mod evaluator;
-pub mod lexer;
-pub mod parser;
-pub mod sexpr;
+mod disassembler;
+mod evaluator;
+pub mod interpreter;
+mod lexer;
+mod parser;
+mod sexpr;
+mod static_stack;
+mod structural_parser;
 pub mod vm;
-pub mod static_stack;

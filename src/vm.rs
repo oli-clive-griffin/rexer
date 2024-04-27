@@ -1,4 +1,4 @@
-use crate::compiler::disassemble;
+use crate::disassembler::disassemble;
 use crate::static_stack::StaticStack;
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -36,7 +36,7 @@ impl Display for ConsCell {
 
         let cdr = if self.1.is_null() {
             "nil".to_string()
-        } else {
+        } else { // would be nice to actually use a ptr to a Nil value here
             format!("{}", unsafe { &*self.1 })
         };
 
@@ -182,7 +182,6 @@ pub enum Op {
     Sub = 2,
     Mul = 3,
     Div = 4,
-    Neg = 5,
     GT = 6,
     LT = 7,
     GTE = 8,
@@ -282,7 +281,6 @@ impl VM {
                 Op::Sub => self.handle_sub(),
                 Op::Mul => self.handle_mul(),
                 Op::Div => self.handle_div(),
-                Op::Neg => self.handle_neg(),
                 Op::GT => self.handle_gt(),
                 Op::LT => self.handle_lt(),
                 Op::GTE => self.handle_gte(),
@@ -440,13 +438,6 @@ impl VM {
             },
             _ => panic!("expected string"),
         }
-        self.advance();
-    }
-
-    fn handle_neg(&mut self) {
-        let a = self.stack.pop().unwrap();
-        self.stack
-            .push(SmallValue::Integer(-a.as_integer().unwrap()));
         self.advance();
     }
 
