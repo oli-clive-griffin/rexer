@@ -152,6 +152,14 @@ impl SmallValue {
             SmallValue::ObjectPtr(_) => false,
         }
     }
+
+    pub fn as_integer(&self) -> Option<&i64> {
+        if let Self::Integer(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,25 +183,70 @@ pub enum Op {
     Mul = 3,
     Div = 4,
     Neg = 5,
-    Jump = 6,     // jumps to the specified address
-    CondJump = 7, // jumps to the specified address if the top of the stack is not zero
-    FuncCall = 8,
-    Return = 9,
-    DeclareGlobal = 10,
-    ReferenceGlobal = 11,
-    ReferenceLocal = 12,
-
-    // testing
-    Cons = 13,
-
-    DebugEnd = 254,   // ends the program
-    DebugPrint = 255, // prints the stack
+    GT = 6,
+    LT = 7,
+    GTE = 8,
+    LTE = 9,
+    Jump = 10,     // jumps to the specified address
+    CondJump = 11, // jumps to the specified address if the top of the stack is not zero
+    FuncCall = 12,
+    Return = 13,
+    DeclareGlobal = 14,
+    ReferenceGlobal = 15,
+    ReferenceLocal = 16,
+    Cons = 17, // really not sure this should be an opcode
+    Print = 18,
+    DebugEnd = 254, // ends the program
 }
 
 impl Default for VM {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn binary_function(name: &'static str, op: Op) -> Function {
+    Function {
+        name: name.to_string(),
+        arity: 2,
+        bytecode: Box::new(BytecodeChunk {
+            code: vec![
+                Op::ReferenceLocal.into(),
+                1,
+                Op::ReferenceLocal.into(),
+                2,
+                op.into(),
+                Op::Return.into(),
+            ],
+            constants: vec![],
+        }),
+    }
+}
+
+fn builtins() -> Vec<Function> {
+    vec![
+        binary_function("*", Op::Mul),
+        binary_function("+", Op::Add),
+        binary_function("-", Op::Sub),
+        binary_function("/", Op::Div),
+        binary_function(">", Op::GT),
+        binary_function("<", Op::LT),
+        binary_function(">=", Op::GTE),
+        binary_function("<=", Op::LTE),
+        Function {
+            name: "print".to_string(),
+            arity: 1,
+            bytecode: Box::new(BytecodeChunk {
+                code: vec![
+                    Op::ReferenceLocal.into(),
+                    1,
+                    Op::Print.into(),
+                    Op::Return.into(),
+                ],
+                constants: vec![],
+            }),
+        },
+    ]
 }
 
 impl VM {
@@ -207,46 +260,11 @@ impl VM {
             global_constants: Vec::default(),
         };
 
-        let mul = unsafe {
-            vm.allocate_value(ObjectValue::Function(Function {
-                name: "*".to_string(),
-                arity: 2,
-                bytecode: Box::new(BytecodeChunk {
-                    code: vec![
-                        Op::ReferenceLocal.into(),
-                        1,
-                        Op::ReferenceLocal.into(),
-                        2,
-                        Op::Mul.into(),
-                        Op::Return.into(),
-                    ],
-                    constants: vec![],
-                }),
-            }))
-        };
-
-        let add = unsafe {
-            vm.allocate_value(ObjectValue::Function(Function {
-                name: "+".to_string(),
-                arity: 2,
-                bytecode: Box::new(BytecodeChunk {
-                    code: vec![
-                        Op::ReferenceLocal.into(),
-                        1,
-                        Op::ReferenceLocal.into(),
-                        2,
-                        Op::Add.into(),
-                        Op::Return.into(),
-                    ],
-                    constants: vec![],
-                }),
-            }))
-        };
-
-        vm.globals
-            .insert("*".to_string(), SmallValue::ObjectPtr(mul));
-        vm.globals
-            .insert("+".to_string(), SmallValue::ObjectPtr(add));
+        for obj in builtins() {
+            let name = obj.name.clone();
+            let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Function(obj)) };
+            vm.globals.insert(name, SmallValue::ObjectPtr(obj_ptr));
+        }
 
         vm
     }
@@ -256,8 +274,6 @@ impl VM {
         self.global_constants = chunk.constants;
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
-            // println!("op: {:?}", byte);
-            // println!("stack: {}", self.stack);
             match byte {
                 Op::Constant => self.handle_constant(),
                 Op::CondJump => self.handle_cond_jump(),
@@ -267,9 +283,13 @@ impl VM {
                 Op::Mul => self.handle_mul(),
                 Op::Div => self.handle_div(),
                 Op::Neg => self.handle_neg(),
+                Op::GT => self.handle_gt(),
+                Op::LT => self.handle_lt(),
+                Op::GTE => self.handle_gte(),
+                Op::LTE => self.handle_lte(),
                 Op::DeclareGlobal => self.handle_declare_global(),
                 Op::ReferenceGlobal => self.handle_reference_global(),
-                Op::DebugPrint => self.handle_print(),
+                Op::Print => self.handle_print(),
                 Op::FuncCall => self.handle_func_call(),
                 Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
@@ -279,7 +299,7 @@ impl VM {
         }
     }
 
-    // the following are all in the wrong order and I don't care
+    // the following are all in the wrong order oh well
 
     fn handle_cons(&mut self) {
         let car = self.stack.pop().unwrap();
@@ -382,18 +402,11 @@ impl VM {
     }
 
     fn handle_print(&mut self) {
-        let val = match self.stack.pop().unwrap() {
-            SmallValue::ObjectPtr(ptr) => format!("{}", &unsafe { &*ptr }),
-            SmallValue::Integer(i) => i.to_string(),
-            SmallValue::Float(f) => f.to_string(),
-            SmallValue::Boolean(b) => b.to_string(),
-            SmallValue::Nil => "nil".to_string(),
-        };
-        println!("{:?}", val);
+        let val = self.stack.pop().unwrap();
+        println!("{}", val);
         self.advance();
     }
 
-    // fn handle_reference_global(&mut self, chunk: &BytecodeChunk) {
     fn handle_reference_global(&mut self) {
         let name = match self.consume_next_byte_as_constant() {
             SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
@@ -411,11 +424,10 @@ impl VM {
         let global = *self.globals.get(name).unwrap_or_else(|| {
             self.runtime_error(format!("undefined global variable: {}", name).as_str());
         });
-        self.stack.push(global); // this is copying right?
+        self.stack.push(global); // copy
         self.advance();
     }
 
-    // fn handle_declare_global(&mut self, chunk: &BytecodeChunk) {
     fn handle_declare_global(&mut self) {
         let value = self.stack.pop().unwrap();
         let name = self.consume_next_byte_as_constant();
@@ -433,10 +445,8 @@ impl VM {
 
     fn handle_neg(&mut self) {
         let a = self.stack.pop().unwrap();
-        self.stack.push(match a {
-            SmallValue::Integer(a) => SmallValue::Integer(-a),
-            _ => todo!(),
-        });
+        self.stack
+            .push(SmallValue::Integer(-a.as_integer().unwrap()));
         self.advance();
     }
 
@@ -470,8 +480,47 @@ impl VM {
         self.advance();
     }
 
+    fn handle_gt(&mut self) {
+        let b = self.stack.pop().unwrap();
+        let a = self.stack.pop().unwrap();
+        self.stack.push(match (a, b) {
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a > b),
+            _ => todo!(),
+        });
+        self.advance();
+    }
+
+    fn handle_lt(&mut self) {
+        let b = self.stack.pop().unwrap();
+        let a = self.stack.pop().unwrap();
+        self.stack.push(match (a, b) {
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a < b),
+            _ => todo!(),
+        });
+        self.advance();
+    }
+
+    fn handle_gte(&mut self) {
+        let b = self.stack.pop().unwrap();
+        let a = self.stack.pop().unwrap();
+        self.stack.push(match (a, b) {
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a >= b),
+            _ => todo!(),
+        });
+        self.advance();
+    }
+
+    fn handle_lte(&mut self) {
+        let b = self.stack.pop().unwrap();
+        let a = self.stack.pop().unwrap();
+        self.stack.push(match (a, b) {
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a <= b),
+            _ => todo!(),
+        });
+        self.advance();
+    }
+
     fn handle_add(&mut self) {
-        // reverse order because we pop from the stack
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         let result = match (a, b) {
@@ -508,15 +557,12 @@ impl VM {
         self.ip = unsafe { self.ip.add(offset) };
     }
 
-    // fn handle_cond_jump(&mut self, chunk: &BytecodeChunk) {
     fn handle_constant(&mut self) {
         let constant = self.consume_next_byte_as_constant();
-        // advances here
         self.stack.push(constant);
         self.advance();
     }
 
-    // fn consume_next_byte_as_constant(&mut self, chunk: &BytecodeChunk) -> StackValue {
     fn consume_next_byte_as_constant(&mut self) -> SmallValue {
         unsafe {
             self.ip = self.ip.add(1);
@@ -524,9 +570,9 @@ impl VM {
 
             match self.get_constant(constant_idx) {
                 // IMPORTANT: clone
-                ConstantValue::Integer(v) => SmallValue::Integer(v.clone()),
-                ConstantValue::Float(v) => SmallValue::Float(v.clone()),
-                ConstantValue::Boolean(v) => SmallValue::Boolean(v.clone()),
+                ConstantValue::Integer(i) => SmallValue::Integer(*i),
+                ConstantValue::Float(f) => SmallValue::Float(*f),
+                ConstantValue::Boolean(b) => SmallValue::Boolean(*b),
                 ConstantValue::Nil => SmallValue::Nil,
                 ConstantValue::Object(value) => {
                     let obj_ptr = self.allocate_value(value.clone());

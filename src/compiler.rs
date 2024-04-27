@@ -19,7 +19,6 @@ pub enum SimpleExpression {
         value: Box<SimpleExpression>,
     },
     Symbol(String),
-    DebugPrint(Box<SimpleExpression>),
     GlobalFunctionDeclaration(Box<GlobalFunctionDeclaration>),
 }
 
@@ -94,10 +93,6 @@ fn compile_expression(
             // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
             constants.push(ConstantValue::Object(ObjectValue::String(symbol)));
             code.push(constants.len() as u8 - 1);
-        }
-        SimpleExpression::DebugPrint(expr) => {
-            compile_expression(*expr, code, constants, locals);
-            code.push(Op::DebugPrint.into());
         }
         SimpleExpression::RegularForm(exprs) => {
             // We don't know the arity of the function at compile-time so we
@@ -207,7 +202,11 @@ fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
 }
 
 pub fn compile_sexprs(sexprs: Vec<Sexpr>) -> BytecodeChunk {
-    let expressions = sexprs.iter().map(map).collect::<Vec<SimpleExpression>>();
+    // let sexprs = macro_expand(sexprs);
+    let expressions = sexprs
+        .iter()
+        .map(structure_sexpr)
+        .collect::<Vec<SimpleExpression>>();
     compile_expressions(expressions)
 }
 
@@ -222,10 +221,12 @@ pub fn compile_expressions(expressions: Vec<SimpleExpression>) -> BytecodeChunk 
     BytecodeChunk::new(code, constants)
 }
 
-/// DRAFT
-pub fn map(sexpr: &Sexpr) -> SimpleExpression {
+pub fn structure_sexpr(sexpr: &Sexpr) -> SimpleExpression {
     match sexpr {
-        Sexpr::Symbol(sym) => SimpleExpression::Symbol(sym.clone()),
+        Sexpr::Symbol(sym) => match sym.as_str() {
+            "nil" => SimpleExpression::Constant(ConstantValue::Nil),
+            _ => SimpleExpression::Symbol(sym.clone()),
+        },
         Sexpr::String(str) => {
             SimpleExpression::Constant(ConstantValue::Object(ObjectValue::String(str.clone())))
         }
@@ -262,7 +263,7 @@ pub fn map(sexpr: &Sexpr) -> SimpleExpression {
             if let Some(special_form) = map_to_special_form(sexprs) {
                 return special_form;
             }
-            SimpleExpression::RegularForm(sexprs.iter().map(map).collect())
+            SimpleExpression::RegularForm(sexprs.iter().map(structure_sexpr).collect())
         }
     }
 }
@@ -274,9 +275,9 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<SimpleExpression> {
         match sym.as_str() {
             "if" => {
                 return Some(SimpleExpression::If {
-                    condition: Box::new(map(&sexprs[1])),
-                    then: Box::new(map(&sexprs[2])),
-                    else_: Box::new(map(&sexprs[3])),
+                    condition: Box::new(structure_sexpr(&sexprs[1])),
+                    then: Box::new(structure_sexpr(&sexprs[2])),
+                    else_: Box::new(structure_sexpr(&sexprs[3])),
                 });
             }
             "set!" => {
@@ -286,7 +287,7 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<SimpleExpression> {
                 };
                 return Some(SimpleExpression::DeclareGlobal {
                     name: name.to_string(),
-                    value: Box::new(map(&sexprs[2])),
+                    value: Box::new(structure_sexpr(&sexprs[2])),
                 });
             }
             "quote" => {
@@ -294,12 +295,6 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<SimpleExpression> {
                     panic!("quote expects 1 argument")
                 }
                 return Some(SimpleExpression::Quote(sexprs[1].clone()));
-            }
-            "debug-print" => {
-                if sexprs.len() != 2 {
-                    panic!("debug-print expects 1 argument")
-                }
-                return Some(SimpleExpression::DebugPrint(Box::new(map(&sexprs[1]))));
             }
             "fn" => {
                 let (name, parameters) = match &sexprs[1] {
@@ -326,7 +321,7 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<SimpleExpression> {
                     ),
                 };
 
-                let body = sexprs[2..].iter().map(map).collect();
+                let body = sexprs[2..].iter().map(structure_sexpr).collect();
 
                 return Some(SimpleExpression::GlobalFunctionDeclaration(Box::new(
                     GlobalFunctionDeclaration {
@@ -356,7 +351,6 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::Return => "Return".to_string(),
             Op::Cons => "Cons".to_string(),
             Op::DebugEnd => "DebugEnd".to_string(),
-            Op::DebugPrint => "DebugPrint".to_string(),
             Op::Constant => {
                 pc += 1;
                 let idx = bc.code[pc];
@@ -410,6 +404,11 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                 let idx = bc.code[pc];
                 format!("ReferenceLocal\n  idx: {idx}")
             }
+            Op::GT => "GT".to_string(),
+            Op::LT => "LT".to_string(),
+            Op::GTE => "GTE".to_string(),
+            Op::LTE => "LTE".to_string(),
+            Op::Print => "PRINT".to_string(),
         };
         lines.push_str(line.as_str());
         lines.push('\n');

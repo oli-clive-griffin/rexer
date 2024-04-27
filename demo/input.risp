@@ -1,9 +1,9 @@
-(fn (fib n)
+(fn (fib-rec n)
     (if (< n 2)
         n
-        (+ (fib (- n 1))
-           (fib (- n 2)))))
+        (+ (fib-rec (- n 1))
+           (fib-rec (- n 2)))))
 
-(print (fib 20))
+(print (fib-rec 20))
 
 (print nil)

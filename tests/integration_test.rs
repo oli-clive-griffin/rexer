@@ -15,15 +15,18 @@ fn e2e_1() {
                 SimpleExpression::Constant(ConstantValue::Integer(12)),
             ])),
         },
-        SimpleExpression::DebugPrint(Box::new(SimpleExpression::If {
-            condition: Box::new(SimpleExpression::Symbol("foo".to_string())),
-            then: Box::new(SimpleExpression::Constant(ConstantValue::Object(
-                ObjectValue::String("true".to_string()),
-            ))),
-            else_: Box::new(SimpleExpression::Constant(ConstantValue::Object(
-                ObjectValue::String("false".to_string()),
-            ))),
-        })),
+        SimpleExpression::RegularForm(vec![
+            SimpleExpression::Symbol("print".to_string()),
+            SimpleExpression::If {
+                condition: Box::new(SimpleExpression::Symbol("foo".to_string())),
+                then: Box::new(SimpleExpression::Constant(ConstantValue::Object(
+                    ObjectValue::String("true".to_string()),
+                ))),
+                else_: Box::new(SimpleExpression::Constant(ConstantValue::Object(
+                    ObjectValue::String("false".to_string()),
+                ))),
+            },
+        ]),
     ];
 
     let bc = compile_expressions(program);
@@ -103,7 +106,7 @@ fn actually_e2e() {
 
 (define foo 10)
 
-(* (a true) (c 2 3)
+(* (a true) (c 2 3))
 "#
     .to_owned();
 
@@ -116,4 +119,40 @@ fn actually_e2e() {
     println!("\n\nTEST:");
     println!("stack: {}", vm.stack);
     println!("globals: {:?}", vm.globals);
+}
+
+#[test]
+fn actually_e2e_2() {
+    let src = r#"
+(fn (fib n)
+    (if (< n 2)
+        n
+        (+ (fib (- n 1))
+           (fib (- n 2)))))
+
+(print (fib 20))
+"#
+    .to_owned();
+
+    let fib = |n: i64| -> i64 {
+        let mut a = 0;
+        let mut b = 1;
+        for _ in 0..n {
+            let c = a + b;
+            a = b;
+            b = c;
+        }
+        return a;
+    };
+
+    let tokens = rusp::lexer::lex(&src).unwrap();
+    let ast = rusp::parser::parse(tokens).unwrap();
+    let bc = compile_sexprs(ast.expressions);
+
+    let mut vm = VM::default();
+    vm.run(bc);
+    println!("\n\nTEST:");
+    println!("stack: {}", vm.stack);
+    println!("globals: {:?}", vm.globals);
+    assert_eq!(fib(20), *vm.stack.at(0).unwrap().as_integer().unwrap());
 }

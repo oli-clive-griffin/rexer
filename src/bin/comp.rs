@@ -23,5 +23,5 @@ fn compile_file(file_path: &String) {
 
     let bc = compiler::compile_sexprs(ast.expressions);
 
-    println!("{:?}", bc)
+    rusp::vm::VM::default().run(bc);
 }
