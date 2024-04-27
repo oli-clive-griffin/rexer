@@ -16,6 +16,10 @@ pub enum Expression {
         then: Box<Expression>,
         else_: Box<Expression>,
     },
+    Define {
+        name: String,
+        value: Box<Expression>,
+    },
     Constant(ConstantValue), // TODO maybe don't use this ConstantValue type here, make own one.
     DeclareGlobal {
         name: String,
@@ -125,56 +129,7 @@ fn compile_expression(
             code.push(Op::FuncCall.into());
             code.push(arity);
         }
-        Expression::Quote(sexpr) => match sexpr {
-            Sexpr::List { quasiquote, sexprs } => {
-                if quasiquote {
-                    todo!("quasiquote not implemented")
-                }
-                // nil for end of list
-                code.push(Op::Constant.into());
-                constants.push(ConstantValue::Nil);
-                code.push(constants.len() as u8 - 1);
-
-                // cons each element in reverse order
-                for expr in sexprs.iter().rev() {
-                    compile_expression(
-                        Expression::Quote(expr.clone()), //
-                        code,
-                        constants,
-                        locals,
-                    );
-                    code.push(Op::Cons.into())
-                }
-            }
-            Sexpr::Symbol(s) => {
-                code.push(Op::Constant.into());
-                constants.push(ConstantValue::Object(ObjectValue::Symbol(s)));
-                code.push(constants.len() as u8 - 1);
-            }
-            Sexpr::Int(i) => {
-                code.push(Op::Constant.into());
-                constants.push(ConstantValue::Integer(i));
-                code.push(constants.len() as u8 - 1);
-            }
-            Sexpr::Float(f) => {
-                code.push(Op::Constant.into());
-                constants.push(ConstantValue::Float(f));
-                code.push(constants.len() as u8 - 1);
-            }
-            Sexpr::String(_) => todo!(),
-            Sexpr::Bool(_) => todo!(),
-            Sexpr::Function {
-                parameters: _,
-                body: _,
-            } => todo!(),
-            Sexpr::Macro {
-                parameters: _,
-                body: _,
-            } => todo!(),
-            Sexpr::BuiltIn(_) => todo!(),
-            Sexpr::CommaUnquote(_) => todo!(),
-            Sexpr::Nil => todo!(),
-        },
+        Expression::Quote(sexpr) => compile_quoted_sexpr(sexpr, code, constants, locals),
         Expression::GlobalFunctionDeclaration(func_dec) => {
             // jank way of doing it for now:
 
@@ -193,6 +148,67 @@ fn compile_expression(
             constants.push(ConstantValue::Object(ObjectValue::String(name)));
             code.push(constants.len() as u8 - 1);
         }
+        Expression::Define { name: _, value: _ } => {
+            todo!()
+        }
+    }
+}
+
+fn compile_quoted_sexpr(
+    sexpr: Sexpr,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+    locals: &mut Vec<String>,
+) {
+    match sexpr {
+        Sexpr::List { quasiquote, sexprs } => {
+            if quasiquote {
+                todo!("quasiquote not implemented")
+            }
+            // nil for end of list
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Nil);
+            code.push(constants.len() as u8 - 1);
+
+            // cons each element in reverse order
+            for expr in sexprs.iter().rev() {
+                compile_expression(
+                    Expression::Quote(expr.clone()), //
+                    code,
+                    constants,
+                    locals,
+                );
+                code.push(Op::Cons.into())
+            }
+        }
+        Sexpr::Symbol(s) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Object(ObjectValue::Symbol(s)));
+            code.push(constants.len() as u8 - 1);
+        }
+        Sexpr::Int(i) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Integer(i));
+            code.push(constants.len() as u8 - 1);
+        }
+        Sexpr::Float(f) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Float(f));
+            code.push(constants.len() as u8 - 1);
+        }
+        Sexpr::String(_) => todo!(),
+        Sexpr::Bool(_) => todo!(),
+        Sexpr::Function {
+            parameters: _,
+            body: _,
+        } => todo!(),
+        Sexpr::Macro {
+            parameters: _,
+            body: _,
+        } => todo!(),
+        Sexpr::BuiltIn(_) => todo!(),
+        Sexpr::CommaUnquote(_) => todo!(),
+        Sexpr::Nil => todo!(),
     }
 }
 

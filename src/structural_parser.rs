@@ -1,4 +1,8 @@
-use crate::{compiler::{GlobalFunctionDeclaration, Expression}, sexpr::Sexpr, vm::{ConstantValue, ObjectValue}};
+use crate::{
+    compiler::{Expression, GlobalFunctionDeclaration},
+    sexpr::Sexpr,
+    vm::{ConstantValue, ObjectValue},
+};
 
 pub fn structure_sexpr(sexpr: &Sexpr) -> Expression {
     match sexpr {
@@ -47,46 +51,62 @@ pub fn structure_sexpr(sexpr: &Sexpr) -> Expression {
     }
 }
 
-
 fn map_to_special_form(sexprs: &[Sexpr]) -> Option<Expression> {
-    let head = sexprs.first().unwrap();
+    let (head, rest) = sexprs.split_first().unwrap();
 
     if let Sexpr::Symbol(sym) = head {
         match sym.as_str() {
             "if" => {
                 return Some(Expression::If {
-                    condition: Box::new(structure_sexpr(&sexprs[1])),
-                    then: Box::new(structure_sexpr(&sexprs[2])),
-                    else_: Box::new(structure_sexpr(&sexprs[3])),
+                    condition: Box::new(structure_sexpr(&rest[0])),
+                    then: Box::new(structure_sexpr(&rest[1])),
+                    else_: Box::new(structure_sexpr(&rest[2])),
                 });
             }
             "set!" => {
-                let name = match &sexprs[1] {
+                let name = match &rest[0] {
                     Sexpr::Symbol(s) => s,
                     _ => panic!("set! expects symbol as first argument"),
                 };
                 return Some(Expression::DeclareGlobal {
                     name: name.to_string(),
-                    value: Box::new(structure_sexpr(&sexprs[2])),
+                    value: Box::new(structure_sexpr(&rest[1])),
                 });
             }
             "quote" => {
-                if sexprs.len() != 2 {
+                if rest.len() != 1 {
                     panic!("quote expects 1 argument")
                 }
-                return Some(Expression::Quote(sexprs[1].clone()));
+                return Some(Expression::Quote(rest[1].clone()));
+            }
+            "define" => {
+                if rest.len() != 2 {
+                    panic!("define expects 2 arguments")
+                }
+                return Some(Expression::Define {
+                    name: match &rest[0] {
+                        Sexpr::Symbol(s) => s.clone(),
+                        _ => panic!("define expects symbol as first argument"),
+                    },
+                    value: Box::new(structure_sexpr(&rest[1])),
+                });
             }
             "fn" => {
-                let (name, parameters) = match &sexprs[1] {
-                    Sexpr::List { quasiquote, sexprs } => {
+                let (signature, body_sexprs) = rest.split_first().unwrap();
+
+                let (name, parameters) = match signature {
+                    Sexpr::List {
+                        quasiquote,
+                        sexprs: arg_sexprs,
+                    } => {
                         if *quasiquote {
                             todo!("inappropriate quasiquote")
                         }
-                        let name = match &sexprs[0] {
+                        let name = match &arg_sexprs[0] {
                             Sexpr::Symbol(s) => s.clone(),
                             _ => panic!("expected symbol for function name"),
                         };
-                        let parameters = sexprs[1..]
+                        let parameters = arg_sexprs[1..]
                             .iter()
                             .map(|sexpr| match sexpr {
                                 Sexpr::Symbol(s) => s.clone(),
@@ -101,10 +121,10 @@ fn map_to_special_form(sexprs: &[Sexpr]) -> Option<Expression> {
                     ),
                 };
 
-                let body = sexprs[2..].iter().map(structure_sexpr).collect();
+                let body_expressions = body_sexprs.iter().map(structure_sexpr).collect();
 
                 return Some(Expression::GlobalFunctionDeclaration(Box::new(
-                    GlobalFunctionDeclaration::new(name, parameters, body),
+                    GlobalFunctionDeclaration::new(name, parameters, body_expressions),
                 )));
             }
             _ => {}

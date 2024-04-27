@@ -8,8 +8,6 @@ fn actually_e2e() {
 
 (fn (c d e) (+ d e))
 
-(define foo 10)
-
 (* (a true) (c 2 3))
 "#
     .to_owned();
