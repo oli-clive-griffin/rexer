@@ -1,15 +1,20 @@
 use crate::{
     lexer,
     parser::{self, Ast},
-    sexpr::Sexpr,
+    sexpr::SrcSexpr,
     structural_parser::structure_sexpr,
     vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op},
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompileTimeConstant {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompileTimeObjectValue {}
+
 // The goal is to get this to be `Sexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
-    Quote(Sexpr),
     RegularForm(Vec<Expression>),
     If {
         condition: Box<Expression>,
@@ -20,29 +25,38 @@ pub enum Expression {
         name: String,
         value: Box<Expression>,
     },
-    Constant(ConstantValue), // TODO maybe don't use this ConstantValue type here, make own one.
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+    Nil,
+    String(String),
+    Symbol(String),
+
+    // List(Vec<Expression>),
+    Quote(SrcSexpr), // what overlap does this have? I think this can handle list for example
+    // yea this has a lot of weird overlap with sexpr
+    // TODO clean up this weird overlap
+    QuasiQuote(SrcSexpr),
     DeclareGlobal {
         name: String,
         value: Box<Expression>,
     },
-    Symbol(String),
-    GlobalFunctionDeclaration(Box<GlobalFunctionDeclaration>),
+    GlobalFunctionDeclaration {
+        name: String,
+        function_expr: FunctionExpression,
+    },
+    FunctionLiteral(FunctionExpression),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct GlobalFunctionDeclaration {
-    name: String,
+pub struct FunctionExpression {
     parameters: Vec<String>,
     body: Vec<Expression>,
 }
 
-impl GlobalFunctionDeclaration {
-    pub fn new(name: String, parameters: Vec<String>, body: Vec<Expression>) -> Self {
-        Self {
-            name,
-            parameters,
-            body,
-        }
+impl FunctionExpression {
+    pub fn new(parameters: Vec<String>, body: Vec<Expression>) -> Self {
+        Self { parameters, body }
     }
 }
 
@@ -53,8 +67,23 @@ fn compile_expression(
     locals: &mut Vec<String>,
 ) {
     match expression {
-        Expression::Constant(value) => {
-            constants.push(value);
+        Expression::Integer(i) => {
+            constants.push(ConstantValue::Integer(i));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::Float(f) => {
+            constants.push(ConstantValue::Float(f));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::Boolean(b) => {
+            constants.push(ConstantValue::Boolean(b));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::Nil => {
+            constants.push(ConstantValue::Nil);
             code.push(Op::Constant.into());
             code.push(constants.len() as u8 - 1);
         }
@@ -130,13 +159,18 @@ fn compile_expression(
             code.push(arity);
         }
         Expression::Quote(sexpr) => compile_quoted_sexpr(sexpr, code, constants, locals),
-        Expression::GlobalFunctionDeclaration(func_dec) => {
-            // jank way of doing it for now:
+        Expression::QuasiQuote(_sexpr) => todo!(),
+        Expression::GlobalFunctionDeclaration {
+            name,
+            function_expr,
+        } => {
+            // potenially jank way of doing it for now:
 
             // make function object
-            let name = func_dec.name.clone();
-            let function_obj =
-                ConstantValue::Object(ObjectValue::Function(compile_function(*func_dec)));
+            let function_obj = ConstantValue::Object(ObjectValue::Function(compile_function(
+                Some(name.clone()),
+                function_expr,
+            )));
 
             // reference constant function object on stack
             code.push(Op::Constant.into());
@@ -151,20 +185,27 @@ fn compile_expression(
         Expression::Define { name: _, value: _ } => {
             todo!()
         }
+        Expression::FunctionLiteral(function_expr) => {
+            compile_function(None, function_expr);
+        }
+        Expression::String(s) => {
+            constants.push(ConstantValue::Object(ObjectValue::String(s)));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
     }
 }
 
 fn compile_quoted_sexpr(
-    sexpr: Sexpr,
+    sexpr: SrcSexpr,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
     locals: &mut Vec<String>,
 ) {
     match sexpr {
-        Sexpr::List { quasiquote, sexprs } => {
-            if quasiquote {
-                todo!("quasiquote not implemented")
-            }
+        SrcSexpr::Quote(_expr) => todo!(), // nested quotes might get weird?
+        SrcSexpr::QuasiQuotedList(_sexprs) => todo!(), // same here
+        SrcSexpr::List(sexprs) => {
             // nil for end of list
             code.push(Op::Constant.into());
             constants.push(ConstantValue::Nil);
@@ -181,51 +222,33 @@ fn compile_quoted_sexpr(
                 code.push(Op::Cons.into())
             }
         }
-        Sexpr::Symbol(s) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Object(ObjectValue::Symbol(s)));
-            code.push(constants.len() as u8 - 1);
+        SrcSexpr::CommaUnquote(expr) => {
+            compile_expression(structure_sexpr(&expr), code, constants, locals)
         }
-        Sexpr::Int(i) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Integer(i));
-            code.push(constants.len() as u8 - 1);
-        }
-        Sexpr::Float(f) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Float(f));
-            code.push(constants.len() as u8 - 1);
-        }
-        Sexpr::String(_) => todo!(),
-        Sexpr::Bool(_) => todo!(),
-        Sexpr::Function {
-            parameters: _,
-            body: _,
-        } => todo!(),
-        Sexpr::Macro {
-            parameters: _,
-            body: _,
-        } => todo!(),
-        Sexpr::BuiltIn(_) => todo!(),
-        Sexpr::CommaUnquote(_) => todo!(),
-        Sexpr::Nil => todo!(),
+        //
+        // TODO these should be doable in a better way
+        SrcSexpr::Symbol(s) => compile_expression(Expression::Symbol(s), code, constants, locals),
+        SrcSexpr::Int(i) => compile_expression(Expression::Integer(i), code, constants, locals),
+        SrcSexpr::Float(f) => compile_expression(Expression::Float(f), code, constants, locals),
+        SrcSexpr::String(s) => compile_expression(Expression::String(s), code, constants, locals),
+        SrcSexpr::Bool(b) => compile_expression(Expression::Boolean(b), code, constants, locals),
     }
 }
 
-fn compile_function(declaration: GlobalFunctionDeclaration) -> Function {
+fn compile_function(name: Option<String>, function_expr: FunctionExpression) -> Function {
     let mut code = vec![];
     let mut constants = vec![];
-    let mut locals = declaration.parameters.clone();
+    let mut locals = function_expr.parameters.clone();
 
-    for expr in declaration.body {
+    for expr in function_expr.body {
         compile_expression(expr, &mut code, &mut constants, &mut locals);
     }
 
     code.push(Op::Return.into());
 
     Function::new(
-        declaration.name,
-        declaration.parameters.len(),
+        name.unwrap_or("anonymous".to_string()),
+        function_expr.parameters.len(),
         BytecodeChunk::new(code, constants),
     )
 }
@@ -280,9 +303,9 @@ mod tests {
     #[test]
     fn test_if() {
         let expression = Expression::If {
-            condition: Box::new(Expression::Constant(ConstantValue::Integer(11))),
-            then: Box::new(Expression::Constant(ConstantValue::Integer(12))),
-            else_: Box::new(Expression::Constant(ConstantValue::Integer(13))),
+            condition: Box::new(Expression::Integer(11)),
+            then: Box::new(Expression::Integer(12)),
+            else_: Box::new(Expression::Integer(13)),
         };
         let bc = compile_expressions(vec![expression]);
         assert_eq!(
@@ -320,7 +343,7 @@ mod tests {
     fn test_declare_global() {
         let expression = Expression::DeclareGlobal {
             name: "foo".to_string(),
-            value: Box::new(Expression::Constant(ConstantValue::Integer(11))),
+            value: Box::new(Expression::Integer(11)),
         };
         let bc = compile_expressions(vec![expression]);
         assert_eq!(
@@ -354,8 +377,8 @@ mod tests {
                 name: "foo".to_string(),
                 value: Box::new(Expression::RegularForm(vec![
                     Expression::Symbol("+".to_string()),
-                    Expression::Constant(ConstantValue::Integer(11)),
-                    Expression::Constant(ConstantValue::Integer(12)),
+                    Expression::Integer(11),
+                    Expression::Integer(12),
                 ])),
             },
             Expression::Symbol("foo".to_string()),
@@ -404,8 +427,8 @@ mod tests {
     fn test_call_function() {
         let bc = compile_expressions(vec![Expression::RegularForm(vec![
             Expression::Symbol("*".to_string()),
-            Expression::Constant(ConstantValue::Integer(11)),
-            Expression::Constant(ConstantValue::Integer(12)),
+            Expression::Integer(11),
+            Expression::Integer(12),
         ])]);
 
         assert_eq!(
@@ -439,13 +462,13 @@ mod tests {
             Expression::Symbol("+".to_string()),
             Expression::RegularForm(vec![
                 Expression::Symbol("+".to_string()),
-                Expression::Constant(ConstantValue::Integer(11)),
-                Expression::Constant(ConstantValue::Integer(12)),
+                Expression::Integer(11),
+                Expression::Integer(12),
             ]),
             Expression::RegularForm(vec![
                 Expression::Symbol("*".to_string()),
-                Expression::Constant(ConstantValue::Integer(13)),
-                Expression::Constant(ConstantValue::Integer(14)),
+                Expression::Integer(13),
+                Expression::Integer(14),
             ]),
         ])]);
 
@@ -496,10 +519,11 @@ mod tests {
     }
     #[test]
     fn test_cons() {
-        let bc = compile_expressions(vec![Expression::Quote(Sexpr::List {
-            quasiquote: false,
-            sexprs: vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3)],
-        })]);
+        let bc = compile_expressions(vec![Expression::Quote(SrcSexpr::List(vec![
+            SrcSexpr::Int(1),
+            SrcSexpr::Int(2),
+            SrcSexpr::Int(3),
+        ]))]);
 
         assert_eq!(
             bc.constants,
@@ -532,17 +556,11 @@ mod tests {
 
     #[test]
     fn test_cons_nested() {
-        let bc = compile_expressions(vec![Expression::Quote(Sexpr::List {
-            quasiquote: false,
-            sexprs: vec![
-                Sexpr::Int(10),
-                Sexpr::List {
-                    quasiquote: false,
-                    sexprs: vec![Sexpr::Int(20), Sexpr::Int(30)],
-                },
-                Sexpr::Int(40),
-            ],
-        })]);
+        let bc = compile_expressions(vec![Expression::Quote(SrcSexpr::List(vec![
+            SrcSexpr::Int(10),
+            SrcSexpr::List(vec![SrcSexpr::Int(20), SrcSexpr::Int(30)]),
+            SrcSexpr::Int(40),
+        ]))]);
 
         assert_eq!(
             bc.constants,

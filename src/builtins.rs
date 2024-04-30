@@ -14,10 +14,7 @@ impl BuiltIn {
 
 const LIST: BuiltIn = BuiltIn {
     symbol: "list",
-    eval: |args| Ok(Sexpr::List {
-        quasiquote: false,
-        sexprs: args.to_vec(),
-    }),
+    eval: |args| Ok(Sexpr::List(args.to_vec())),
 };
 
 const CONS: BuiltIn = BuiltIn {
@@ -27,18 +24,15 @@ const CONS: BuiltIn = BuiltIn {
             return Err("cons must be called with two arguments".to_string());
         }
         match &args[1] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => {
+            Sexpr::List(list) => {
                 let mut new = list.clone();
                 new.insert(0, args[0].clone());
-                Ok(Sexpr::List {
-                    quasiquote: false,
-                    sexprs: new,
-                })
+                Ok(Sexpr::List(new))
             }
-            a => Err(format!("cons must be called with a list as the second argument, got {:#?}", a)),
+            a => Err(format! {
+                "cons must be called with a list as the second argument, got {:#?}",
+                a
+            }),
         }
     },
 };
@@ -50,10 +44,7 @@ const CAR: BuiltIn = BuiltIn {
             return Err("car must be called with one argument".to_string());
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => Ok(list[0].clone()),
+            Sexpr::List(list) => Ok(list[0].clone()),
             _ => Err("car must be called with a list as the first argument".to_string()),
         }
     },
@@ -63,19 +54,16 @@ const CDR: BuiltIn = BuiltIn {
     symbol: "cdr",
     eval: |args| {
         if args.len() != 1 {
-            return Err(format!("cdr must be called with one argument, got {}", args.len()));
+            return Err(format!(
+                "cdr must be called with one argument, got {}",
+                args.len()
+            ));
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => {
+            Sexpr::List(list) => {
                 let mut new = list.clone();
                 new.remove(0);
-                Ok(Sexpr::List {
-                    quasiquote: false,
-                    sexprs: new,
-                })
+                Ok(Sexpr::List(new))
             }
             _ => Err("cdr must be called with a list as the first argument".to_string()),
         }
@@ -157,10 +145,7 @@ const EMPTY: BuiltIn = BuiltIn {
             return Err("empty must be called with one argument".to_string());
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => Ok(Sexpr::Bool(list.is_empty())),
+            Sexpr::List(list) => Ok(Sexpr::Bool(list.is_empty())),
             _ => Err("empty must be called with a list as the first argument".to_string()),
         }
     },
@@ -179,7 +164,6 @@ const INC: BuiltIn = BuiltIn {
         }
     },
 };
-
 
 const PRINT: BuiltIn = BuiltIn {
     symbol: "print",
@@ -202,7 +186,7 @@ const EQ: BuiltIn = BuiltIn {
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
 const GT: BuiltIn = BuiltIn {
@@ -216,7 +200,7 @@ const GT: BuiltIn = BuiltIn {
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
 const LT: BuiltIn = BuiltIn {
@@ -230,10 +214,12 @@ const LT: BuiltIn = BuiltIn {
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
-pub const BUILT_INS: [BuiltIn; 14] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT];
+pub const BUILT_INS: [BuiltIn; 14] = [
+    CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT,
+];
 
 #[cfg(test)]
 mod tests {
@@ -243,17 +229,11 @@ mod tests {
     fn test_cons() -> Result<(), String> {
         let args = vec![
             Sexpr::Int(1),
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: vec![Sexpr::Int(2), Sexpr::Int(3)],
-            },
+            Sexpr::List(vec![Sexpr::Int(2), Sexpr::Int(3)]),
         ];
         assert_eq!(
             CONS.eval(&args)?,
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3),]
-            }
+            Sexpr::List(vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3),])
         );
         Ok(())
     }

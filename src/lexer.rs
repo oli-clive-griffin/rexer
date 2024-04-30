@@ -1,5 +1,3 @@
-
-
 #[derive(Debug, PartialEq)]
 pub enum LR {
     Left,
@@ -25,7 +23,8 @@ pub enum Token {
     Literal(Literal),
     Symbol(String),
     Comma,
-    Backtick,
+    Backtick,   // ` for quote_level
+    Apostrophe, // ' for quote
 }
 
 impl Token {
@@ -53,20 +52,8 @@ enum LexerState {
     Symbol(String),        // could resolve to a keyword, identifier, or boolean
 }
 
-fn remove_comments(s: String) -> String {
-    s.trim()
-        .split('\n')
-        .filter(|line| !line.trim().starts_with(';'))
-        .collect::<Vec<&str>>()
-        .concat()
-}
-
 pub fn lex(s: &String) -> Result<Vec<Token>, String> {
-    let chars = remove_comments(s.to_string())
-        .trim()
-        .chars()
-        .filter(|c| *c != '\n' && *c != '\r')
-        .collect::<Vec<_>>();
+    let chars = s.to_string().trim().chars().collect::<Vec<_>>();
 
     let mut state: LexerState = LexerState::None;
     let mut tokens: Vec<Token> = vec![];
@@ -76,13 +63,25 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
 
         match state {
             LexerState::Symbol(ref mut s) => {
-                if c == ' ' || c == '(' || c == ')' || c == ',' || c == '`' {
-                    tokens.push(Token::from_string(s));
-                    state = LexerState::None;
-                    // important to not increment i here, we want to lex the current char
-                } else {
-                    s.push(c);
-                    i += 1;
+                match c {
+                    ' ' | '(' | ')' | '\n' => { // potential newline troubles with encoding?
+                        tokens.push(Token::from_string(s));
+                        state = LexerState::None;
+                    }
+                    ';' => {
+                        // comment, skip to end of line
+                        while i < chars.len() && chars[i] != '\n' {
+                            i += 1;
+                        }
+                    }
+                    // 'a'..='z' | 'A'..='Z' | '_' | '#' | '-' | ':' => {
+                    c => {
+                        s.push(c);
+                        i += 1;
+                    }
+                    // _ => {
+                    //     return Err(format!("Unexpected character in symbol: [{}]", c).to_string());
+                    // }
                 }
             }
             LexerState::NumberLiteral(ref mut s) => {
@@ -94,7 +93,9 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
                     state = LexerState::None;
                     // important to not increment i here, we want to lex the current char
                 } else {
-                    return Err(format!("Unexpected character in number literal: [{}]", c).to_string());
+                    return Err(
+                        format!("Unexpected character in number literal: [{}]", c).to_string()
+                    );
                 }
             }
             LexerState::StringLiteral(ref mut s) => {
@@ -109,7 +110,7 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
             }
             LexerState::None => {
                 match c {
-                    ' ' => {}
+                    ' ' | '\n' => {}
                     '"' => {
                         state = LexerState::StringLiteral(String::new());
                     }
@@ -120,9 +121,18 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
                     ')' => tokens.push(Token::Parenthesis(LR::Right)),
                     ',' => tokens.push(Token::Comma),
                     '`' => tokens.push(Token::Backtick),
+                    '\'' => tokens.push(Token::Apostrophe),
+                    ';' => {
+                        // comment, skip to end of line
+                        while i < chars.len() && chars[i] != '\n' {
+                            i += 1;
+                        }
+                    }
+                    // 'a'..='z' | 'A'..='Z' | '_' | '#' | '-' | ':' => {
                     c => {
                         state = LexerState::Symbol(c.to_string());
                     }
+                    // c => panic!("Unexpected character: [{}]", c),
                 }
                 i += 1;
             }
@@ -197,6 +207,41 @@ mod tests {
             Token::Comma,
             Token::Symbol("a".to_string()),
             Token::Comma,
+            Token::Symbol("b".to_string()),
+            Token::Parenthesis(LR::Right),
+        ];
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_comment() -> Result<(), String> {
+        let input = r#"
+(; comment
+    a b)
+"#
+        .to_string();
+        let expected = vec![
+            Token::Parenthesis(LR::Left),
+            Token::Symbol("a".to_string()),
+            Token::Symbol("b".to_string()),
+            Token::Parenthesis(LR::Right),
+        ];
+        assert_eq!(lex(&input)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_newlines() -> Result<(), String> {
+        let input = r#"
+(a
+ b
+)
+"#
+        .to_string();
+        let expected = vec![
+            Token::Parenthesis(LR::Left),
+            Token::Symbol("a".to_string()),
             Token::Symbol("b".to_string()),
             Token::Parenthesis(LR::Right),
         ];
