@@ -37,20 +37,20 @@ pub enum SrcSexpr {
 }
 
 impl SrcSexpr {
-    pub fn to_sexpr(self) -> Sexpr {
+    pub fn to_sexpr(&self) -> Sexpr {
         match self {
             SrcSexpr::List(sexprs) => {
-                Sexpr::List(sexprs.into_iter().map(|t| t.to_sexpr()).collect())
+                Sexpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect())
             }
-            SrcSexpr::Symbol(s) => Sexpr::Symbol(s),
-            SrcSexpr::String(s) => Sexpr::String(s),
-            SrcSexpr::Bool(b) => Sexpr::Bool(b),
-            SrcSexpr::Int(i) => Sexpr::Int(i),
-            SrcSexpr::Float(f) => Sexpr::Float(f),
+            SrcSexpr::Symbol(s) => Sexpr::Symbol(s.clone()),
+            SrcSexpr::String(s) => Sexpr::String(s.clone()),
+            SrcSexpr::Bool(b) => Sexpr::Bool(*b),
+            SrcSexpr::Int(i) => Sexpr::Int(*i),
+            SrcSexpr::Float(f) => Sexpr::Float(*f),
             SrcSexpr::CommaUnquote(t) => Sexpr::CommaUnquote(Box::new(t.to_sexpr())),
             SrcSexpr::Quote(sexpr) => Sexpr::Quote(Box::new(sexpr.to_sexpr())),
             SrcSexpr::QuasiQuotedList(sexprs) => {
-                Sexpr::QuasiQuotedList(sexprs.into_iter().map(|t| t.to_sexpr()).collect())
+                Sexpr::QuasiQuotedList(sexprs.iter().map(|t| t.to_sexpr()).collect())
             }
         }
     }

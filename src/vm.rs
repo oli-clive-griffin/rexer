@@ -447,7 +447,11 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a / b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a / b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 / b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a / b as f64),
+            _ => panic!("expected integer or float")
+
         });
         self.advance();
     }
@@ -457,7 +461,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a * b),
-            other => todo!("not implemented for {:?}", other),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a * b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 * b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a * b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -467,7 +474,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a - b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a - b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 - b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a - b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -477,7 +487,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a > b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a > b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 > b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a > b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -487,7 +500,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a < b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a < b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean((a as f64) < b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a < b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -497,7 +513,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a >= b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a >= b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 >= b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a >= b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -507,7 +526,10 @@ impl VM {
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a <= b),
-            _ => todo!(),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a <= b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 <= b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a <= b as f64),
+            _ => panic!("expected integer or float")
         });
         self.advance();
     }
@@ -517,6 +539,9 @@ impl VM {
         let a = self.stack.pop().unwrap();
         let result = match (a, b) {
             (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a + b),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a + b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 + b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a + b as f64),
             (SmallValue::ObjectPtr(a), SmallValue::ObjectPtr(b)) => {
                 match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
                     (ObjectValue::String(a), ObjectValue::String(b)) => {
@@ -529,7 +554,7 @@ impl VM {
                     _ => todo!(),
                 }
             }
-            _ => todo!(),
+            _ => panic!("expected integer, float, or string object"), // todo probably remove string + support
         };
         self.stack.push(result);
         self.advance();

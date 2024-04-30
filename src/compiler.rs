@@ -36,7 +36,7 @@ pub enum Expression {
     Quote(SrcSexpr), // what overlap does this have? I think this can handle list for example
     // yea this has a lot of weird overlap with sexpr
     // TODO clean up this weird overlap
-    QuasiQuote(SrcSexpr),
+    QuasiQuotedList(Vec<SrcSexpr>),
     DeclareGlobal {
         name: String,
         value: Box<Expression>,
@@ -159,7 +159,9 @@ fn compile_expression(
             code.push(arity);
         }
         Expression::Quote(sexpr) => compile_quoted_sexpr(sexpr, code, constants, locals),
-        Expression::QuasiQuote(_sexpr) => todo!(),
+        Expression::QuasiQuotedList(_sexprs) => {
+            todo!()
+        }
         Expression::GlobalFunctionDeclaration {
             name,
             function_expr,

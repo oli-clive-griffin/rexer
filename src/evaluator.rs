@@ -77,19 +77,19 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Result<(Sexpr, Scope), String> 
     if list.is_empty() {
         return Ok((Sexpr::List(vec![]), scope.clone()));
     }
-    
+
     let (first, rest) = list.split_first().unwrap();
 
     // FIXME fix this clone
     match first.clone() {
         Sexpr::Quote(sexpr) => Ok((*sexpr, scope.clone())),
         Sexpr::Symbol(symbol) => match symbol.as_str() {
-            "lambda" => eval_rest_as_lambda(&rest, scope),
-            "macro" => eval_rest_as_macro_declaration(&rest, scope),
-            "if" => eval_rest_as_if(&rest, scope),
-            "let" => eval_rest_as_let(&rest, scope),
+            "lambda" => eval_rest_as_lambda(rest, scope),
+            "macro" => eval_rest_as_macro_declaration(rest, scope),
+            "if" => eval_rest_as_if(rest, scope),
+            "let" => eval_rest_as_let(rest, scope),
             "fn" => {
-                let (result, scope) = eval_rest_as_function_declaration(&rest, scope)?;
+                let (result, scope) = eval_rest_as_function_declaration(rest, scope)?;
                 if let Sexpr::Function {
                     parameters: _,
                     body: _,
@@ -141,7 +141,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Result<(Sexpr, Scope), String> 
         }
         Sexpr::Macro { parameters, body } => {
             // DON'T EVALUATE THE MACRO BODY
-            let arguments = &rest;
+            let arguments = rest;
 
             if parameters.len() != arguments.len() {
                 return Err("Macro called with incorrect number of arguments".to_string());
@@ -174,7 +174,7 @@ fn eval_list(list: Vec<Sexpr>, scope: &Scope) -> Result<(Sexpr, Scope), String> 
             )
         }
 
-        Sexpr::QuasiQuotedList(l) => {
+        Sexpr::QuasiQuotedList(_l) => {
             panic!("cannot call a quasi-quoted list");
         }
 
@@ -348,19 +348,12 @@ pub fn evaluate(ast: Ast) -> Result<Sexpr, String> {
 impl Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Sexpr::List(sexprs) => {
-                write!(f, "(")?;
-                for (i, sexpr) in sexprs.iter().enumerate() {
-                    write!(f, "{}", sexpr)?;
-                    if i < sexprs.len() - 1 {
-                        write!(f, ", ")?;
-                    }
-                }
-                write!(f, ")")?;
-                Ok(())
+            Sexpr::List(sexprs) => write_sexpr_vec(f, sexprs),
+            Sexpr::Quote(sexpr) => write!(f, "'{}", sexpr),
+            Sexpr::QuasiQuotedList(sexprs) => {
+                write!(f, "`")?;
+                write_sexpr_vec(f, sexprs)
             }
-            Sexpr::Quote(_) => todo!(),
-            Sexpr::QuasiQuotedList(_) => todo!(),
             Sexpr::Symbol(sym) => write!(f, ":{}", sym),
             Sexpr::String(str) => write!(f, "\"{}\"", str),
             Sexpr::Bool(b) => write!(f, "{}", b),
@@ -379,6 +372,18 @@ impl Display for Sexpr {
             Sexpr::Nil => write!(f, "nil"),
         }
     }
+}
+
+fn write_sexpr_vec(f: &mut std::fmt::Formatter, sexprs: &[Sexpr]) -> Result<(), std::fmt::Error> {
+    write!(f, "(")?;
+    for (i, sexpr) in sexprs.iter().enumerate() {
+        write!(f, "{}", sexpr)?;
+        if i < sexprs.len() - 1 {
+            write!(f, ", ")?;
+        }
+    }
+    write!(f, ")")?;
+    Ok(())
 }
 
 pub struct Session {

@@ -23,7 +23,7 @@ pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
             Expression::RegularForm(sexprs.iter().map(structure_sexpr).collect())
         }
         SrcSexpr::Quote(sexpr) => Expression::Quote(*sexpr.clone()),
-        SrcSexpr::QuasiQuotedList(sexprs) => Expression::QuasiQuote(sexpr.clone()),
+        SrcSexpr::QuasiQuotedList(sexprs) => Expression::QuasiQuotedList(sexprs.clone()),
     }
 }
 
