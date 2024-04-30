@@ -1,10 +1,11 @@
 use crate::builtins::BuiltIn;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Sexpr {
-    List(Vec<Sexpr>),
-    Quote(Box<Sexpr>),
-    QuasiQuotedList(Vec<Sexpr>),
+/// Previously known as `Sexpr`
+pub enum RuntimeExpr {
+    List(Vec<RuntimeExpr>),
+    Quote(Box<RuntimeExpr>),
+    QuasiQuotedList(Vec<RuntimeExpr>),
     Symbol(String),
     String(String),
     Bool(bool),
@@ -12,46 +13,55 @@ pub enum Sexpr {
     Float(f64),
     Function {
         parameters: Vec<String>,
-        body: Vec<Sexpr>,
+        body: Vec<RuntimeExpr>,
     },
     Macro {
         parameters: Vec<String>,
-        body: Box<Sexpr>,
+        body: Box<RuntimeExpr>,
     },
     BuiltIn(BuiltIn),
-    CommaUnquote(Box<Sexpr>),
+    CommaUnquote(Box<RuntimeExpr>),
     Nil,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SrcSexpr {
-    List(Vec<SrcSexpr>),
-    Quote(Box<SrcSexpr>),
-    QuasiQuotedList(Vec<SrcSexpr>),
-    Symbol(String),
-    String(String),
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    CommaUnquote(Box<SrcSexpr>),
+    Bool(bool), // true, false
+    Integer(i64), // 1
+    Float(f64), // 1.0
+    String(String), // "foo"
+    Symbol(String), // +, -, *, /, foo
+    List(Vec<SrcSexpr>), // (+ 2 3)
+    Quote(Box<SrcSexpr>), // '(+ 2 3), 'foo
+    // mirror of compiler::Literal
 }
 
+// #[derive(Debug, PartialEq, Clone)]
+// pub enum Sexpr {
+//     //                     // sexpr              evaluated
+//     //                     // -------------------------
+//     Bool(bool),     //     // true            -> true
+//     Int(i64),       //     // 3               -> 3
+//     Float(f64),     //     // 0.1             -> 0.1
+//     String(String), //     // "foo"           -> "foo"
+//     Symbol(String), //     // foo             -> <whatever foo is>
+//     //                     // +               -> <builtin function +>
+//     Quote(Box<Sexpr>), //  // 'foo            -> foo
+//     //                     // '"asdf"         -> "asdf"
+//     //                     // '3              -> 3
+//     List(Vec<Expression>), // '(1 "foo" 'bar) -> (1 "foo" 'bar)
+// }
+
 impl SrcSexpr {
-    pub fn to_sexpr(&self) -> Sexpr {
+    pub fn to_sexpr(&self) -> RuntimeExpr {
         match self {
-            SrcSexpr::List(sexprs) => {
-                Sexpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect())
-            }
-            SrcSexpr::Symbol(s) => Sexpr::Symbol(s.clone()),
-            SrcSexpr::String(s) => Sexpr::String(s.clone()),
-            SrcSexpr::Bool(b) => Sexpr::Bool(*b),
-            SrcSexpr::Int(i) => Sexpr::Int(*i),
-            SrcSexpr::Float(f) => Sexpr::Float(*f),
-            SrcSexpr::CommaUnquote(t) => Sexpr::CommaUnquote(Box::new(t.to_sexpr())),
-            SrcSexpr::Quote(sexpr) => Sexpr::Quote(Box::new(sexpr.to_sexpr())),
-            SrcSexpr::QuasiQuotedList(sexprs) => {
-                Sexpr::QuasiQuotedList(sexprs.iter().map(|t| t.to_sexpr()).collect())
-            }
+            SrcSexpr::List(sexprs) => RuntimeExpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
+            SrcSexpr::Symbol(s) => RuntimeExpr::Symbol(s.clone()),
+            SrcSexpr::String(s) => RuntimeExpr::String(s.clone()),
+            SrcSexpr::Bool(b) => RuntimeExpr::Bool(*b),
+            SrcSexpr::Integer(i) => RuntimeExpr::Int(*i),
+            SrcSexpr::Float(f) => RuntimeExpr::Float(*f),
+            SrcSexpr::Quote(sexpr) => RuntimeExpr::Quote(Box::new(sexpr.to_sexpr())),
         }
     }
 }

@@ -5,25 +5,19 @@ use crate::{
 
 pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
     match sexpr {
-        SrcSexpr::CommaUnquote(_) => {
-            todo!("unquote not implemented")
-        }
-        SrcSexpr::Symbol(sym) => match sym.as_str() {
-            "nil" => Expression::Nil,
-            _ => Expression::Symbol(sym.clone()),
-        },
-        SrcSexpr::String(str) => Expression::String(str.clone()),
-        SrcSexpr::Bool(bool) => Expression::Boolean(*bool),
-        SrcSexpr::Int(i) => Expression::Integer(*i),
-        SrcSexpr::Float(f) => Expression::Float(*f),
+        SrcSexpr::Symbol(a) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())),
+        SrcSexpr::String(a) => Expression::SrcSexpr(SrcSexpr::String(a.clone())),
+        SrcSexpr::Bool(a) => Expression::SrcSexpr(SrcSexpr::Bool(*a)),
+        SrcSexpr::Integer(a) => Expression::SrcSexpr(SrcSexpr::Integer(*a)),
+        SrcSexpr::Float(a) => Expression::SrcSexpr(SrcSexpr::Float(*a)),
+        SrcSexpr::Quote(sexpr) => Expression::SrcSexpr(SrcSexpr::Quote(Box::new(*sexpr.clone()))),
         SrcSexpr::List(sexprs) => {
             if let Some(special_form) = map_to_special_form(sexprs) {
                 return special_form;
             }
             Expression::RegularForm(sexprs.iter().map(structure_sexpr).collect())
         }
-        SrcSexpr::Quote(sexpr) => Expression::Quote(*sexpr.clone()),
-        SrcSexpr::QuasiQuotedList(sexprs) => Expression::QuasiQuotedList(sexprs.clone()),
+
     }
 }
 
@@ -39,21 +33,13 @@ fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
                     else_: Box::new(structure_sexpr(&rest[2])),
                 });
             }
-            "set!" => {
-                let name = match &rest[0] {
-                    SrcSexpr::Symbol(s) => s,
-                    _ => panic!("set! expects symbol as first argument"),
-                };
-                return Some(Expression::DeclareGlobal {
-                    name: name.to_string(),
-                    value: Box::new(structure_sexpr(&rest[1])),
-                });
-            }
             "quote" => {
                 if rest.len() != 1 {
                     panic!("quote expects 1 argument")
                 }
-                return Some(Expression::Quote(rest[1].clone()));
+                return Some(Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
+                    rest[1].clone(),
+                ))));
             }
             "define" => {
                 if rest.len() != 2 {
@@ -102,15 +88,13 @@ fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
                 let (parameters, body_sexprs) = rest.split_first().unwrap();
 
                 let parameters = match parameters {
-                    SrcSexpr::List(arg_sexprs) => {
-                        arg_sexprs
-                            .iter()
-                            .map(|sexpr| match sexpr {
-                                SrcSexpr::Symbol(s) => s.clone(),
-                                _ => panic!("expected symbol for parameter"),
-                            })
-                            .collect()
-                    }
+                    SrcSexpr::List(arg_sexprs) => arg_sexprs
+                        .iter()
+                        .map(|sexpr| match sexpr {
+                            SrcSexpr::Symbol(s) => s.clone(),
+                            _ => panic!("expected symbol for parameter"),
+                        })
+                        .collect(),
                     _ => panic!("expected list for function parameters"),
                 };
 
