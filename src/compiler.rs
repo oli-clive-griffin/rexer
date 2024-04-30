@@ -3,7 +3,7 @@ use crate::{
     parser::{self, Ast},
     sexpr::SrcSexpr,
     structural_parser::structure_sexpr,
-    vm::{BytecodeChunk, ConstantValue, Function, ObjectValue, Op},
+    vm::{BytecodeChunk, ConsCell, ConstantValue, Function, ObjectValue, Op, SmallValue},
 };
 
 // The goal is to get this to be `SrcSexpr`
@@ -64,49 +64,51 @@ fn compile_expression(
     locals: &mut Vec<String>,
 ) {
     match expression {
-        Expression::SrcSexpr(sexpr) => {
-            match sexpr {
-                SrcSexpr::Bool(b) => {
-                    constants.push(ConstantValue::Boolean(b));
-                    code.push(Op::Constant.into());
-                    code.push(constants.len() as u8 - 1);
-                }
-                SrcSexpr::Integer(i) => {
-                    constants.push(ConstantValue::Integer(i));
-                    code.push(Op::Constant.into());
-                    code.push(constants.len() as u8 - 1);
-                }
-                SrcSexpr::Float(f) => {
-                    constants.push(ConstantValue::Float(f));
-                    code.push(Op::Constant.into());
-                    code.push(constants.len() as u8 - 1);
-                }
-                SrcSexpr::String(s) => {
-                    constants.push(ConstantValue::Object(ObjectValue::String(s)));
-                    code.push(Op::Constant.into());
-                    code.push(constants.len() as u8 - 1);
-                }
-                SrcSexpr::Symbol(s) => {
-                    // local / function argument
-                    let local_idx = locals.iter().position(|x| x == &s);
-                    if let Some(idx) = local_idx {
-                        code.push(Op::ReferenceLocal.into());
-                        code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
-                        return;
-                    }
-
-                    // fall back to global
-                    code.push(Op::ReferenceGlobal.into());
-                    // this can be optimized by reusing the same constant for the same symbol
-                    // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
-                    constants.push(ConstantValue::Object(ObjectValue::String(s)));
-                    code.push(constants.len() as u8 - 1);
-                }
-                SrcSexpr::Quote(expr) => compile_quoted_sexpr(*expr, code, constants, locals),
-                SrcSexpr::List(_list) => {
-                    unreachable!("List should be handled by RegularForm")
-                }
+        Expression::SrcSexpr(SrcSexpr::Bool(b)) => {
+            constants.push(ConstantValue::Boolean(b));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::SrcSexpr(SrcSexpr::Int(i)) => {
+            constants.push(ConstantValue::Integer(i));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::SrcSexpr(SrcSexpr::Float(f)) => {
+            constants.push(ConstantValue::Float(f));
+            code.push(Op::Constant.into());
+            code.push(add_sexpr_to_constants(sexpr ,constants));
+        }
+        Expression::SrcSexpr(SrcSexpr::String(s)) => {
+            constants.push(ConstantValue::Object(ObjectValue::String(s)));
+            code.push(Op::Constant.into());
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::SrcSexpr(SrcSexpr::Symbol(s)) => {
+            // local / function argument
+            let local_idx = locals.iter().position(|x| x == &s);
+            if let Some(idx) = local_idx {
+                code.push(Op::ReferenceLocal.into());
+                code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
+                return;
             }
+
+            // fall back to global
+            code.push(Op::ReferenceGlobal.into());
+            // this can be optimized by reusing the same constant for the same symbol
+            // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
+            constants.push(ConstantValue::Object(ObjectValue::String(s)));
+            code.push(constants.len() as u8 - 1);
+        }
+        Expression::SrcSexpr(SrcSexpr::Quote(expr)) => {
+            // compile_quoted_sexpr(*expr, code, constants, locals)
+
+            let const_idx = add_sexpr_to_constants(*expr, constants);
+            code.push(Op::Constant.into());
+            code.push(const_idx as u8);
+        }
+        Expression::SrcSexpr(SrcSexpr::List(_list)) => {
+            unreachable!("List should be handled by RegularForm")
         }
         Expression::If {
             condition,
@@ -198,63 +200,71 @@ fn compile_expression(
     }
 }
 
-fn compile_quoted_sexpr(
-    sexpr: SrcSexpr,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    locals: &mut Vec<String>,
-) {
+fn add_sexpr_to_constants(sexpr: SrcSexpr, constants: &mut Vec<ConstantValue>) -> usize {
     match sexpr {
-        SrcSexpr::Quote(_expr) => todo!(), // nested quotes might get weird?
-        SrcSexpr::List(sexprs) => {
-            // nil for end of list
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Nil);
-            code.push(constants.len() as u8 - 1);
-
-            // cons each element in reverse order
-            for expr in sexprs.iter().rev() {
-                compile_expression(
-                    Expression::SrcSexpr(SrcSexpr::Quote(Box::new(expr.clone()))),
-                    code,
-                    constants,
-                    locals,
-                );
-                code.push(Op::Cons.into())
-            }
+        SrcSexpr::Quote(sexpr) => {
+            // recursively add the quoted sexpr to constants
+            let constants_idx = add_sexpr_to_constants(*sexpr, constants);
+            let constant_addr = unsafe { constants.as_ptr().offset(constants_idx as isize) };
+            constants.push(ConstantValue::Object(ObjectValue::Quote(constant_addr)));
+            constants.len() - 1
         }
-        //
-        // TODO these should be doable in a better way
-        SrcSexpr::Symbol(s) => compile_expression(
-            Expression::SrcSexpr(SrcSexpr::Symbol(s)),
-            code,
-            constants,
-            locals,
-        ),
-        SrcSexpr::Integer(i) => compile_expression(
-            Expression::SrcSexpr(SrcSexpr::Integer(i)),
-            code,
-            constants,
-            locals,
-        ),
-        SrcSexpr::Float(f) => compile_expression(
-            Expression::SrcSexpr(SrcSexpr::Float(f)),
-            code,
-            constants,
-            locals,
-        ),
-        SrcSexpr::String(s) => compile_expression(
-            Expression::SrcSexpr(SrcSexpr::String(s)),
-            code,
-            constants,
-            locals,
-        ),
-        SrcSexpr::Bool(b) => compile_expression(
-            Expression::SrcSexpr(SrcSexpr::Bool(b)),
-            code,
-            constants,
-            locals,
-        ),
+        SrcSexpr::List(sexprs) => {
+            // constants.push(ConstantValue::Nil);
+            // let mut cdr_idx = constants.len() - 1;
+            // for expr in sexprs.iter().rev() {
+            //     let cons_cell = ConsCell::new(
+            //         match expr {
+            //             SrcSexpr::Bool(b) => SmallValue::Bool(*b),
+            //             SrcSexpr::Int(i) => SmallValue::Integer(*i),
+            //             SrcSexpr::Float(f) => SmallValue::Float(*f),
+            //             SrcSexpr::String(s) => SmallValue::ObjectPtr(s.clone()),
+            //             SrcSexpr::Symbol(_) => todo!(),
+            //             SrcSexpr::List(_) => todo!(),
+            //             SrcSexpr::Quote(_) => todo!(),
+            //         },
+            //         cdr_idx,
+            //     );
+            //     constants.push(ConstantValue::Object(ObjectValue::ConsCell(cons_cell)))
+            // }
+
+            // // nil for end of list
+            // code.push(Op::Constant.into());
+            // constants.push(ConstantValue::Nil);
+            // code.push(constants.len() as u8 - 1);
+
+            // // cons each element in reverse order
+            // for expr in sexprs.iter().rev() {
+            //     compile_expression(
+            //         Expression::SrcSexpr(SrcSexpr::Quote(Box::new(expr.clone()))),
+            //         code,
+            //         constants,
+            //         locals,
+            //     );
+            //     code.push(Op::Cons.into())
+            // }
+            todo!()
+        }
+        SrcSexpr::Symbol(sym) => {
+            constants.push(ConstantValue::Object(ObjectValue::Symbol(sym)));
+            constants.len() - 1
+        }
+        SrcSexpr::Bool(b) => {
+            constants.push(ConstantValue::Boolean(b));
+            constants.len() - 1
+        }
+        SrcSexpr::Int(i) => {
+            constants.push(ConstantValue::Integer(i));
+            constants.len() - 1
+        }
+        SrcSexpr::Float(f) => {
+            constants.push(ConstantValue::Float(f));
+            constants.len() - 1
+        }
+        SrcSexpr::String(s) => {
+            constants.push(ConstantValue::Object(ObjectValue::String(s)));
+            constants.len() - 1
+        }
     }
 }
 
@@ -284,6 +294,8 @@ fn compile_ast(ast: Ast) -> BytecodeChunk {
         .map(structure_sexpr)
         .collect::<Vec<Expression>>();
 
+    println!("{:#?}", expressions);
+
     compile_expressions(expressions)
 }
 
@@ -300,14 +312,14 @@ fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
 
 pub fn compile(src: &String) -> BytecodeChunk {
     let tokens = lexer::lex(src).unwrap_or_else(|e| {
-        eprintln!("Lexing error: {}", e);
-        std::process::exit(1);
+        panic!("Lexing error: {}", e);
     });
+    // println!("{:#?}", tokens);
 
     let ast = parser::parse(tokens).unwrap_or_else(|e| {
-        eprintln!("Parsing error: {}", e);
-        std::process::exit(1);
+        panic!("Parsing error: {}", e);
     });
+    // println!("{:#?}", ast);
 
     compile_ast(ast)
 }
@@ -326,9 +338,9 @@ mod tests {
     #[test]
     fn test_if() {
         let expression = Expression::If {
-            condition: Box::new(Expression::SrcSexpr(SrcSexpr::Integer(11))),
-            then: Box::new(Expression::SrcSexpr(SrcSexpr::Integer(12))),
-            else_: Box::new(Expression::SrcSexpr(SrcSexpr::Integer(13))),
+            condition: Box::new(Expression::SrcSexpr(SrcSexpr::Int(11))),
+            then: Box::new(Expression::SrcSexpr(SrcSexpr::Int(12))),
+            else_: Box::new(Expression::SrcSexpr(SrcSexpr::Int(13))),
         };
         let bc = compile_expressions(vec![expression]);
         assert_eq!(
@@ -366,7 +378,7 @@ mod tests {
     fn test_declare_global() {
         let expression = Expression::DeclareGlobal {
             name: "foo".to_string(),
-            value: Box::new(Expression::SrcSexpr(SrcSexpr::Integer(11))),
+            value: Box::new(Expression::SrcSexpr(SrcSexpr::Int(11))),
         };
         let bc = compile_expressions(vec![expression]);
         assert_eq!(
@@ -400,8 +412,8 @@ mod tests {
                 name: "foo".to_string(),
                 value: Box::new(Expression::RegularForm(vec![
                     Expression::SrcSexpr(SrcSexpr::Symbol("+".to_string())),
-                    Expression::SrcSexpr(SrcSexpr::Integer(11)),
-                    Expression::SrcSexpr(SrcSexpr::Integer(12)),
+                    Expression::SrcSexpr(SrcSexpr::Int(11)),
+                    Expression::SrcSexpr(SrcSexpr::Int(12)),
                 ])),
             },
             Expression::SrcSexpr(SrcSexpr::Symbol("foo".to_string())),
@@ -450,8 +462,8 @@ mod tests {
     fn test_call_function() {
         let bc = compile_expressions(vec![Expression::RegularForm(vec![
             Expression::SrcSexpr(SrcSexpr::Symbol("*".to_string())),
-            Expression::SrcSexpr(SrcSexpr::Integer(11)),
-            Expression::SrcSexpr(SrcSexpr::Integer(12)),
+            Expression::SrcSexpr(SrcSexpr::Int(11)),
+            Expression::SrcSexpr(SrcSexpr::Int(12)),
         ])]);
 
         assert_eq!(
@@ -485,13 +497,13 @@ mod tests {
             Expression::SrcSexpr(SrcSexpr::Symbol("+".to_string())),
             Expression::RegularForm(vec![
                 Expression::SrcSexpr(SrcSexpr::Symbol("+".to_string())),
-                Expression::SrcSexpr(SrcSexpr::Integer(11)),
-                Expression::SrcSexpr(SrcSexpr::Integer(12)),
+                Expression::SrcSexpr(SrcSexpr::Int(11)),
+                Expression::SrcSexpr(SrcSexpr::Int(12)),
             ]),
             Expression::RegularForm(vec![
                 Expression::SrcSexpr(SrcSexpr::Symbol("*".to_string())),
-                Expression::SrcSexpr(SrcSexpr::Integer(13)),
-                Expression::SrcSexpr(SrcSexpr::Integer(14)),
+                Expression::SrcSexpr(SrcSexpr::Int(13)),
+                Expression::SrcSexpr(SrcSexpr::Int(14)),
             ]),
         ])]);
 
@@ -543,11 +555,7 @@ mod tests {
     #[test]
     fn test_cons() {
         let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-            SrcSexpr::List(vec![
-                SrcSexpr::Integer(1),
-                SrcSexpr::Integer(2),
-                SrcSexpr::Integer(3),
-            ]),
+            SrcSexpr::List(vec![SrcSexpr::Int(1), SrcSexpr::Int(2), SrcSexpr::Int(3)]),
         )))]);
 
         assert_eq!(
@@ -583,9 +591,9 @@ mod tests {
     fn test_cons_nested() {
         let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
             SrcSexpr::List(vec![
-                SrcSexpr::Integer(10),
-                SrcSexpr::List(vec![SrcSexpr::Integer(20), SrcSexpr::Integer(30)]),
-                SrcSexpr::Integer(40),
+                SrcSexpr::Int(10),
+                SrcSexpr::List(vec![SrcSexpr::Int(20), SrcSexpr::Int(30)]),
+                SrcSexpr::Int(40),
             ]),
         )))]);
 

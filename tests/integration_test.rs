@@ -47,11 +47,48 @@ fn actually_e2e_2() {
 
     let mut vm = VM::default();
     vm.run(bc);
-    println!("stack: {}", vm.stack);
-    println!("globals: {:?}", vm.globals);
     assert_eq!(fib(20), *vm.stack.at(0).unwrap().as_integer().unwrap());
 }
 
+fn run_code(src: &str) {
+    let bc = compile(&src.to_string());
+    VM::default().run(bc);
+}
+
+#[test]
+fn target_spec_2() {
+    run_code("(print 'asdf)");
+}
+
+#[test]
+fn target_spec_3() {
+    run_code("(print '(asdf))");
+}
+
+#[test]
+fn target_spec_4() {
+    run_code("(print '(asdf 1))");
+}
+
+#[test]
+fn target_spec_5() {
+    run_code("(print '(asdf (1)))");
+}
+
+#[test]
+fn target_spec_6() {
+    run_code("(print '(asdf '(1)))");
+}
+
+#[test]
+fn target_spec_7() {
+    run_code("(print '1)");
+}
+
+#[test]
+fn target_spec_8() {
+    run_code("(print '\"a\")");
+}
 
 #[test]
 fn target_spec() {
@@ -145,7 +182,5 @@ fn target_spec() {
 
     let mut vm = VM::default();
     vm.run(bc);
-    println!("stack: {}", vm.stack);
-    println!("globals: {:?}", vm.globals);
     assert_eq!(fib(20), *vm.stack.at(0).unwrap().as_integer().unwrap());
 }

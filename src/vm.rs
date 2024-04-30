@@ -25,10 +25,16 @@ pub enum ObjectValue {
     Function(Function),
     Symbol(String),
     ConsCell(ConsCell),
+    Quote(*const ConstantValue),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsCell(SmallValue, *mut ConsCell);
+impl ConsCell {
+    pub fn new(car: SmallValue, cdr: *mut ConsCell) -> Self {
+        ConsCell(car, cdr)
+    }
+}
 
 impl Display for ConsCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -48,11 +54,25 @@ impl Display for ConsCell {
 impl Display for ObjectValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ObjectValue::String(s) => write!(f, "{}", s),
+            ObjectValue::String(s) => write!(f, "\"{}\"", s),
             ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
-            ObjectValue::Symbol(s) => write!(f, ":{}", s),
+            ObjectValue::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
             ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
+            ObjectValue::Quote(c) => write!(f, "'{}", unsafe { &**c }),
+            
+        }
+    }
+}
+
+impl Display for ConstantValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantValue::Integer(i) => write!(f, "{}", i),
+            ConstantValue::Float(fl) => write!(f, "{}", fl),
+            ConstantValue::Boolean(b) => write!(f, "{}", b),
+            ConstantValue::Nil => write!(f, "nil"),
+            ConstantValue::Object(obj) => write!(f, "{}", obj),
         }
     }
 }
@@ -103,7 +123,7 @@ impl Display for HeapObject {
 pub enum SmallValue {
     Integer(i64),
     Float(f64),
-    Boolean(bool),
+    Bool(bool),
     Nil,
     ObjectPtr(*mut HeapObject),
 }
@@ -113,7 +133,7 @@ impl Display for SmallValue {
         match self {
             SmallValue::Integer(i) => write!(f, "{}", i),
             SmallValue::Float(fl) => write!(f, "{}", fl),
-            SmallValue::Boolean(b) => write!(f, "{}", b),
+            SmallValue::Bool(b) => write!(f, "{}", b),
             SmallValue::Nil => write!(f, "nil"),
             SmallValue::ObjectPtr(ptr) => write!(f, "{}", unsafe { &**ptr }),
         }
@@ -148,7 +168,7 @@ impl SmallValue {
         match self {
             SmallValue::Integer(i) => *i != 0,
             SmallValue::Float(f) => *f != 0.0,
-            SmallValue::Boolean(b) => *b,
+            SmallValue::Bool(b) => *b,
             SmallValue::Nil => false,
             SmallValue::ObjectPtr(_) => false,
         }
@@ -486,10 +506,10 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a > b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a > b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 > b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a > b as f64),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a > b),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a > b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 > b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a > b as f64),
             _ => panic!("expected integer or float")
         });
         self.advance();
@@ -499,10 +519,10 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a < b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a < b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean((a as f64) < b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a < b as f64),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a < b),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a < b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool((a as f64) < b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a < b as f64),
             _ => panic!("expected integer or float")
         });
         self.advance();
@@ -512,10 +532,10 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a >= b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a >= b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 >= b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a >= b as f64),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a >= b),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a >= b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 >= b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a >= b as f64),
             _ => panic!("expected integer or float")
         });
         self.advance();
@@ -525,10 +545,10 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Boolean(a <= b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Boolean(a <= b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Boolean(a as f64 <= b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Boolean(a <= b as f64),
+            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a <= b),
+            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a <= b),
+            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 <= b),
+            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a <= b as f64),
             _ => panic!("expected integer or float")
         });
         self.advance();
@@ -589,7 +609,7 @@ impl VM {
                 // IMPORTANT: clone
                 ConstantValue::Integer(i) => SmallValue::Integer(*i),
                 ConstantValue::Float(f) => SmallValue::Float(*f),
-                ConstantValue::Boolean(b) => SmallValue::Boolean(*b),
+                ConstantValue::Boolean(b) => SmallValue::Bool(*b),
                 ConstantValue::Nil => SmallValue::Nil,
                 ConstantValue::Object(value) => {
                     let obj_ptr = self.allocate_value(value.clone());

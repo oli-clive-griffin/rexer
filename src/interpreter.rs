@@ -7,21 +7,16 @@ pub fn run_file(file_path: &String) {
         std::fs::read_to_string(file_path).expect("Something went wrong reading the file");
 
     let tokens = lexer::lex(&contents).unwrap_or_else(|e| {
-        eprintln!("Lexing error: {}", e);
-        std::process::exit(1);
+        panic!("Lexing error: {}", e);
     });
 
     let ast = parser::parse(tokens).unwrap_or_else(|e| {
-        eprintln!("Parsing error: {}", e);
-        std::process::exit(1);
+        panic!("Parsing error: {}", e);
     });
 
     evaluator::evaluate(ast).unwrap_or_else(|e| {
-        eprintln!("Evaluation error: {}", e);
-        std::process::exit(1);
+        panic!("Evaluation error: {}", e);
     });
-
-    std::process::exit(0);
 }
 
 pub fn repl() {

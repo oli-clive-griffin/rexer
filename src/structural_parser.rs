@@ -8,7 +8,7 @@ pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
         SrcSexpr::Symbol(a) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())),
         SrcSexpr::String(a) => Expression::SrcSexpr(SrcSexpr::String(a.clone())),
         SrcSexpr::Bool(a) => Expression::SrcSexpr(SrcSexpr::Bool(*a)),
-        SrcSexpr::Integer(a) => Expression::SrcSexpr(SrcSexpr::Integer(*a)),
+        SrcSexpr::Int(a) => Expression::SrcSexpr(SrcSexpr::Int(*a)),
         SrcSexpr::Float(a) => Expression::SrcSexpr(SrcSexpr::Float(*a)),
         SrcSexpr::Quote(sexpr) => Expression::SrcSexpr(SrcSexpr::Quote(Box::new(*sexpr.clone()))),
         SrcSexpr::List(sexprs) => {

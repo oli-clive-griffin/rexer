@@ -27,7 +27,7 @@ pub enum RuntimeExpr {
 #[derive(Debug, PartialEq, Clone)]
 pub enum SrcSexpr {
     Bool(bool), // true, false
-    Integer(i64), // 1
+    Int(i64), // 1
     Float(f64), // 1.0
     String(String), // "foo"
     Symbol(String), // +, -, *, /, foo
@@ -59,7 +59,7 @@ impl SrcSexpr {
             SrcSexpr::Symbol(s) => RuntimeExpr::Symbol(s.clone()),
             SrcSexpr::String(s) => RuntimeExpr::String(s.clone()),
             SrcSexpr::Bool(b) => RuntimeExpr::Bool(*b),
-            SrcSexpr::Integer(i) => RuntimeExpr::Int(*i),
+            SrcSexpr::Int(i) => RuntimeExpr::Int(*i),
             SrcSexpr::Float(f) => RuntimeExpr::Float(*f),
             SrcSexpr::Quote(sexpr) => RuntimeExpr::Quote(Box::new(sexpr.to_sexpr())),
         }

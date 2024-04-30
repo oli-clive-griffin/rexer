@@ -354,7 +354,7 @@ impl Display for RuntimeExpr {
                 write!(f, "`")?;
                 write_sexpr_vec(f, sexprs)
             }
-            RuntimeExpr::Symbol(sym) => write!(f, ":{}", sym),
+            RuntimeExpr::Symbol(sym) => write!(f, "{}", sym), // might want :{} later
             RuntimeExpr::String(str) => write!(f, "\"{}\"", str),
             RuntimeExpr::Bool(b) => write!(f, "{}", b),
             RuntimeExpr::Int(i) => write!(f, "{}", i),
