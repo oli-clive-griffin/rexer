@@ -2,10 +2,10 @@ use crate::builtins::BuiltIn;
 
 #[derive(Debug, PartialEq, Clone)]
 /// Previously known as `Sexpr`
-pub enum RuntimeExpr {
-    List(Vec<RuntimeExpr>),
-    Quote(Box<RuntimeExpr>),
-    QuasiQuotedList(Vec<RuntimeExpr>),
+pub enum EvauluatorRuntimeValue {
+    List(Vec<EvauluatorRuntimeValue>),
+    Quote(Box<EvauluatorRuntimeValue>),
+    QuasiQuotedList(Vec<EvauluatorRuntimeValue>),
     Symbol(String),
     String(String),
     Bool(bool),
@@ -13,14 +13,14 @@ pub enum RuntimeExpr {
     Float(f64),
     Function {
         parameters: Vec<String>,
-        body: Vec<RuntimeExpr>,
+        body: Vec<EvauluatorRuntimeValue>,
     },
     Macro {
         parameters: Vec<String>,
-        body: Box<RuntimeExpr>,
+        body: Box<EvauluatorRuntimeValue>,
     },
     BuiltIn(BuiltIn),
-    CommaUnquote(Box<RuntimeExpr>),
+    CommaUnquote(Box<EvauluatorRuntimeValue>),
     Nil,
 }
 
@@ -36,32 +36,16 @@ pub enum SrcSexpr {
     // mirror of compiler::Literal
 }
 
-// #[derive(Debug, PartialEq, Clone)]
-// pub enum Sexpr {
-//     //                     // sexpr              evaluated
-//     //                     // -------------------------
-//     Bool(bool),     //     // true            -> true
-//     Int(i64),       //     // 3               -> 3
-//     Float(f64),     //     // 0.1             -> 0.1
-//     String(String), //     // "foo"           -> "foo"
-//     Symbol(String), //     // foo             -> <whatever foo is>
-//     //                     // +               -> <builtin function +>
-//     Quote(Box<Sexpr>), //  // 'foo            -> foo
-//     //                     // '"asdf"         -> "asdf"
-//     //                     // '3              -> 3
-//     List(Vec<Expression>), // '(1 "foo" 'bar) -> (1 "foo" 'bar)
-// }
-
 impl SrcSexpr {
-    pub fn to_sexpr(&self) -> RuntimeExpr {
+    pub fn to_sexpr(&self) -> EvauluatorRuntimeValue {
         match self {
-            SrcSexpr::List(sexprs) => RuntimeExpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
-            SrcSexpr::Symbol(s) => RuntimeExpr::Symbol(s.clone()),
-            SrcSexpr::String(s) => RuntimeExpr::String(s.clone()),
-            SrcSexpr::Bool(b) => RuntimeExpr::Bool(*b),
-            SrcSexpr::Int(i) => RuntimeExpr::Int(*i),
-            SrcSexpr::Float(f) => RuntimeExpr::Float(*f),
-            SrcSexpr::Quote(sexpr) => RuntimeExpr::Quote(Box::new(sexpr.to_sexpr())),
+            SrcSexpr::List(sexprs) => EvauluatorRuntimeValue::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
+            SrcSexpr::Symbol(s) => EvauluatorRuntimeValue::Symbol(s.clone()),
+            SrcSexpr::String(s) => EvauluatorRuntimeValue::String(s.clone()),
+            SrcSexpr::Bool(b) => EvauluatorRuntimeValue::Bool(*b),
+            SrcSexpr::Int(i) => EvauluatorRuntimeValue::Int(*i),
+            SrcSexpr::Float(f) => EvauluatorRuntimeValue::Float(*f),
+            SrcSexpr::Quote(sexpr) => EvauluatorRuntimeValue::Quote(Box::new(sexpr.to_sexpr())),
         }
     }
 }

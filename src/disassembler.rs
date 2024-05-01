@@ -1,4 +1,4 @@
-use crate::vm::{BytecodeChunk, ConstantValue, ObjectValue, Op};
+use crate::vm::{BytecodeChunk, ConstantObject, ConstantValue, Op};
 
 pub fn disassemble(bc: &BytecodeChunk) -> String {
     let mut pc = 0;
@@ -39,7 +39,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                 let name_idx = bc.code[pc];
                 let name = match &bc.constants[name_idx as usize] {
                     ConstantValue::Object(o) => match o {
-                        ObjectValue::String(s) => s,
+                        ConstantObject::String(s) => s,
                         got => panic!("expected string for global name, got {:?}", got),
                     },
                     got => panic!("expected object for global name, got {:?}", got),
@@ -53,7 +53,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                 let name_idx = bc.code[pc];
                 let name = match &bc.constants[name_idx as usize] {
                     ConstantValue::Object(o) => match o {
-                        ObjectValue::String(s) => s,
+                        ConstantObject::String(s) => s,
                         got => panic!("expected string for global name, got {:?}", got),
                     },
                     got => panic!("expected object for global name, got {:?}", got),
@@ -71,6 +71,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::GTE => "GTE".to_string(),
             Op::LTE => "LTE".to_string(),
             Op::Print => "PRINT".to_string(),
+            Op::Quote => "QUOTE".to_string(),
         };
         lines.push_str(line.as_str());
         lines.push('\n');

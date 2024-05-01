@@ -66,7 +66,7 @@ pub fn parse_sexpr(rest_tokens: &[Token]) -> Result<(SrcSexpr, usize), String> {
             parse_sexpr(&rest_tokens[1..]).map(|op| {
                 (
                     SrcSexpr::Quote(Box::new(op.0)), //
-                    op.1 + 1, // skip the apostrophe
+                    op.1 + 1,                        // skip the apostrophe
                 )
             })
         } // match next_token {

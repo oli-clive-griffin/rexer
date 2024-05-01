@@ -64,7 +64,8 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
         match state {
             LexerState::Symbol(ref mut s) => {
                 match c {
-                    ' ' | '(' | ')' | '\n' => { // potential newline troubles with encoding?
+                    ' ' | '(' | ')' | '\n' => {
+                        // potential newline troubles with encoding?
                         tokens.push(Token::from_string(s));
                         state = LexerState::None;
                     }
@@ -78,10 +79,9 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
                     c => {
                         s.push(c);
                         i += 1;
-                    }
-                    // _ => {
-                    //     return Err(format!("Unexpected character in symbol: [{}]", c).to_string());
-                    // }
+                    } // _ => {
+                      //     return Err(format!("Unexpected character in symbol: [{}]", c).to_string());
+                      // }
                 }
             }
             LexerState::NumberLiteral(ref mut s) => {
@@ -131,8 +131,7 @@ pub fn lex(s: &String) -> Result<Vec<Token>, String> {
                     // 'a'..='z' | 'A'..='Z' | '_' | '#' | '-' | ':' => {
                     c => {
                         state = LexerState::Symbol(c.to_string());
-                    }
-                    // c => panic!("Unexpected character: [{}]", c),
+                    } // c => panic!("Unexpected character: [{}]", c),
                 }
                 i += 1;
             }

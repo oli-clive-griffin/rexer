@@ -17,7 +17,6 @@ pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
             }
             Expression::RegularForm(sexprs.iter().map(structure_sexpr).collect())
         }
-
     }
 }
 

@@ -56,6 +56,12 @@ fn run_code(src: &str) {
 }
 
 #[test]
+fn target_spec_1() {
+    run_code("(print '\"asdf\")");
+}
+
+
+#[test]
 fn target_spec_2() {
     run_code("(print 'asdf)");
 }
@@ -82,7 +88,7 @@ fn target_spec_6() {
 
 #[test]
 fn target_spec_7() {
-    run_code("(print '1)");
+    run_code("(print ''1)");
 }
 
 #[test]

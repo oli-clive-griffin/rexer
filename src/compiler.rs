@@ -1,9 +1,10 @@
+use crate::vm::ConstantObject;
 use crate::{
     lexer,
     parser::{self, Ast},
     sexpr::SrcSexpr,
     structural_parser::structure_sexpr,
-    vm::{BytecodeChunk, ConsCell, ConstantValue, Function, ObjectValue, Op, SmallValue},
+    vm::{BytecodeChunk, ConstantValue, Function, Op},
 };
 
 // The goal is to get this to be `SrcSexpr`
@@ -64,133 +65,44 @@ fn compile_expression(
     locals: &mut Vec<String>,
 ) {
     match expression {
-        Expression::SrcSexpr(SrcSexpr::Bool(b)) => {
-            constants.push(ConstantValue::Boolean(b));
-            code.push(Op::Constant.into());
-            code.push(constants.len() as u8 - 1);
-        }
-        Expression::SrcSexpr(SrcSexpr::Int(i)) => {
-            constants.push(ConstantValue::Integer(i));
-            code.push(Op::Constant.into());
-            code.push(constants.len() as u8 - 1);
-        }
-        Expression::SrcSexpr(SrcSexpr::Float(f)) => {
-            constants.push(ConstantValue::Float(f));
-            code.push(Op::Constant.into());
-            code.push(add_sexpr_to_constants(sexpr ,constants));
-        }
-        Expression::SrcSexpr(SrcSexpr::String(s)) => {
-            constants.push(ConstantValue::Object(ObjectValue::String(s)));
-            code.push(Op::Constant.into());
-            code.push(constants.len() as u8 - 1);
-        }
-        Expression::SrcSexpr(SrcSexpr::Symbol(s)) => {
-            // local / function argument
-            let local_idx = locals.iter().position(|x| x == &s);
-            if let Some(idx) = local_idx {
-                code.push(Op::ReferenceLocal.into());
-                code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
-                return;
+        Expression::SrcSexpr(sexpr) => match sexpr {
+            SrcSexpr::Symbol(sym) => {
+                // evaulate as reference as opposed to value
+                // local / function argument
+                let local_idx = locals.iter().position(|x| x == &sym);
+                if let Some(idx) = local_idx {
+                    code.push(Op::ReferenceLocal.into());
+                    code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
+                    return;
+                }
+                // fall back to global
+                code.push(Op::ReferenceGlobal.into());
+                // this can be optimized by reusing the same constant for the same symbol
+                // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
+                constants.push(ConstantValue::Object(ConstantObject::String(sym)));
+                code.push(constants.len() as u8 - 1);
             }
-
-            // fall back to global
-            code.push(Op::ReferenceGlobal.into());
-            // this can be optimized by reusing the same constant for the same symbol
-            // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
-            constants.push(ConstantValue::Object(ObjectValue::String(s)));
-            code.push(constants.len() as u8 - 1);
-        }
-        Expression::SrcSexpr(SrcSexpr::Quote(expr)) => {
-            // compile_quoted_sexpr(*expr, code, constants, locals)
-
-            let const_idx = add_sexpr_to_constants(*expr, constants);
-            code.push(Op::Constant.into());
-            code.push(const_idx as u8);
-        }
-        Expression::SrcSexpr(SrcSexpr::List(_list)) => {
-            unreachable!("List should be handled by RegularForm")
-        }
+            SrcSexpr::Bool(_) | SrcSexpr::Int(_) | SrcSexpr::Float(_) | SrcSexpr::String(_) => {
+                compile_self_evaluation(sexpr, code, constants, 0)
+            }
+            SrcSexpr::Quote(_) => compile_self_evaluation(sexpr, code, constants, 1),
+            SrcSexpr::List(_) => {
+                unreachable!("this should have been handled by the structural parser")
+            }
+        },
         Expression::If {
             condition,
             then,
             else_,
-        } => {
-            // IF
-            compile_expression(*condition, code, constants, locals);
-
-            // skip to "then"
-            code.push(Op::CondJump.into());
-            code.push(0x00); // will mutate this later
-            let then_jump_idx = code.len() - 1;
-
-            // ELSE
-            compile_expression(*else_, code, constants, locals);
-
-            // skip to end
-            code.push(Op::Jump.into());
-            // code[to_then_jump_address as usize] = code.len() as u8;
-            code.push(0x00); // will mutate this later
-            let finish_jump_idx = code.len() - 1;
-
-            // THEN
-            let then_jump = (code.len() - then_jump_idx) as u8;
-            code[then_jump_idx] = then_jump;
-            compile_expression(*then, code, constants, locals);
-
-            // FINISH
-            let finish_jump = (code.len() - finish_jump_idx) as u8;
-            code[finish_jump_idx] = finish_jump
-        }
+        } => compile_if_statement(condition, code, constants, locals, else_, then),
         Expression::DeclareGlobal { name, value } => {
-            compile_expression(*value, code, constants, locals);
-            code.push(Op::DeclareGlobal.into());
-            constants.push(ConstantValue::Object(ObjectValue::String(name)));
-            code.push(constants.len() as u8 - 1);
+            compile_global_declaration(value, code, constants, locals, name)
         }
-        Expression::RegularForm(exprs) => {
-            // We don't know the arity of the function at compile-time so we
-            // defensively put the number of arguments to check at runtime
-            let arity = {
-                let arity = exprs.len() - 1;
-                if arity > 255 {
-                    panic!()
-                }
-                arity as u8
-            };
-
-            for expr in exprs {
-                compile_expression(expr, code, constants, locals);
-            }
-
-            code.push(Op::FuncCall.into());
-            code.push(arity);
-        }
-        // Expression::Quote(sexpr) => compile_quoted_sexpr(sexpr, code, constants, locals),
-        // Expression::QuasiQuotedList(_sexprs) => {
-        //     todo!()
-        // }
+        Expression::RegularForm(exprs) => compile_regular_form(exprs, code, constants, locals),
         Expression::GlobalFunctionDeclaration {
             name,
             function_expr,
-        } => {
-            // potenially jank way of doing it for now:
-
-            // make function object
-            let function_obj = ConstantValue::Object(ObjectValue::Function(compile_function(
-                Some(name.clone()),
-                function_expr,
-            )));
-
-            // reference constant function object on stack
-            code.push(Op::Constant.into());
-            constants.push(function_obj);
-            code.push(constants.len() as u8 - 1);
-
-            // declare top of stack as global
-            code.push(Op::DeclareGlobal.into());
-            constants.push(ConstantValue::Object(ObjectValue::String(name)));
-            code.push(constants.len() as u8 - 1);
-        }
+        } => compile_global_function_declaration(name, function_expr, code, constants),
         Expression::Define { name: _, value: _ } => {
             todo!()
         }
@@ -200,70 +112,149 @@ fn compile_expression(
     }
 }
 
-fn add_sexpr_to_constants(sexpr: SrcSexpr, constants: &mut Vec<ConstantValue>) -> usize {
+// can this be implemented in terms of global declaration?
+fn compile_global_function_declaration(
+    name: String,
+    function_expr: FunctionExpression,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+) {
+    // potenially jank way of doing it for now:
+    // make function object
+    let function_obj = ConstantValue::Object(ConstantObject::Function(compile_function(
+        Some(name.clone()),
+        function_expr,
+    )));
+    // reference constant function object on stack
+    code.push(Op::Constant.into());
+    constants.push(function_obj);
+    code.push(constants.len() as u8 - 1);
+    // declare top of stack as global
+    code.push(Op::DeclareGlobal.into());
+    constants.push(ConstantValue::Object(ConstantObject::String(name)));
+    code.push(constants.len() as u8 - 1);
+}
+
+fn compile_regular_form(
+    exprs: Vec<Expression>,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+    locals: &mut Vec<String>,
+) {
+    // We don't know the arity of the function at compile-time so we
+    // defensively put the number of arguments to check at runtime
+    let arity = {
+        let arity = exprs.len() - 1;
+        if arity > 255 {
+            panic!()
+        }
+        arity as u8
+    };
+    for expr in exprs {
+        compile_expression(expr, code, constants, locals);
+    }
+    code.push(Op::FuncCall.into());
+    code.push(arity);
+}
+
+fn compile_global_declaration(
+    value: Box<Expression>,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+    locals: &mut Vec<String>,
+    name: String,
+) {
+    compile_expression(*value, code, constants, locals);
+    code.push(Op::DeclareGlobal.into());
+    constants.push(ConstantValue::Object(ConstantObject::String(name)));
+    code.push(constants.len() as u8 - 1);
+}
+
+fn compile_if_statement(
+    condition: Box<Expression>,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+    locals: &mut Vec<String>,
+    else_: Box<Expression>,
+    then: Box<Expression>,
+) {
+    // IF
+    compile_expression(*condition, code, constants, locals);
+    // skip to "then"
+    code.push(Op::CondJump.into());
+    code.push(0x00);
+    // will mutate this later
+    let then_jump_idx = code.len() - 1;
+    // ELSE
+    compile_expression(*else_, code, constants, locals);
+    // skip to end
+    code.push(Op::Jump.into());
+    // code[to_then_jump_address as usize] = code.len() as u8;
+    code.push(0x00);
+    // will mutate this later
+    let finish_jump_idx = code.len() - 1;
+    // THEN
+    let then_jump = (code.len() - then_jump_idx) as u8;
+    code[then_jump_idx] = then_jump;
+    compile_expression(*then, code, constants, locals);
+    // FINISH
+    let finish_jump = (code.len() - finish_jump_idx) as u8;
+    code[finish_jump_idx] = finish_jump
+}
+
+fn compile_self_evaluation(
+    sexpr: SrcSexpr,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+    quote_level: usize,
+) {
     match sexpr {
-        SrcSexpr::Quote(sexpr) => {
-            // recursively add the quoted sexpr to constants
-            let constants_idx = add_sexpr_to_constants(*sexpr, constants);
-            let constant_addr = unsafe { constants.as_ptr().offset(constants_idx as isize) };
-            constants.push(ConstantValue::Object(ObjectValue::Quote(constant_addr)));
-            constants.len() - 1
+        SrcSexpr::Bool(x) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Boolean(x));
+            code.push(constants.len() as u8 - 1);
         }
+        SrcSexpr::Int(x) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Integer(x));
+            code.push(constants.len() as u8 - 1);
+        }
+        SrcSexpr::Float(x) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Float(x));
+            code.push(constants.len() as u8 - 1);
+        }
+        SrcSexpr::String(x) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Object(ConstantObject::String(x)));
+            code.push(constants.len() as u8 - 1);
+        }
+        SrcSexpr::Symbol(x) => {
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Object(ConstantObject::Symbol(x)));
+            code.push(constants.len() as u8 - 1);
+        }
+        // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
         SrcSexpr::List(sexprs) => {
-            // constants.push(ConstantValue::Nil);
-            // let mut cdr_idx = constants.len() - 1;
-            // for expr in sexprs.iter().rev() {
-            //     let cons_cell = ConsCell::new(
-            //         match expr {
-            //             SrcSexpr::Bool(b) => SmallValue::Bool(*b),
-            //             SrcSexpr::Int(i) => SmallValue::Integer(*i),
-            //             SrcSexpr::Float(f) => SmallValue::Float(*f),
-            //             SrcSexpr::String(s) => SmallValue::ObjectPtr(s.clone()),
-            //             SrcSexpr::Symbol(_) => todo!(),
-            //             SrcSexpr::List(_) => todo!(),
-            //             SrcSexpr::Quote(_) => todo!(),
-            //         },
-            //         cdr_idx,
-            //     );
-            //     constants.push(ConstantValue::Object(ObjectValue::ConsCell(cons_cell)))
-            // }
+            // nil for end of list
+            code.push(Op::Constant.into());
+            constants.push(ConstantValue::Nil);
+            code.push(constants.len() as u8 - 1);
 
-            // // nil for end of list
-            // code.push(Op::Constant.into());
-            // constants.push(ConstantValue::Nil);
-            // code.push(constants.len() as u8 - 1);
-
-            // // cons each element in reverse order
-            // for expr in sexprs.iter().rev() {
-            //     compile_expression(
-            //         Expression::SrcSexpr(SrcSexpr::Quote(Box::new(expr.clone()))),
-            //         code,
-            //         constants,
-            //         locals,
-            //     );
-            //     code.push(Op::Cons.into())
-            // }
-            todo!()
+            // cons each element in reverse order
+            for sexpr in sexprs.into_iter().rev() {
+                compile_self_evaluation(sexpr, code, constants, quote_level);
+                code.push(Op::Cons.into());
+            }
         }
-        SrcSexpr::Symbol(sym) => {
-            constants.push(ConstantValue::Object(ObjectValue::Symbol(sym)));
-            constants.len() - 1
-        }
-        SrcSexpr::Bool(b) => {
-            constants.push(ConstantValue::Boolean(b));
-            constants.len() - 1
-        }
-        SrcSexpr::Int(i) => {
-            constants.push(ConstantValue::Integer(i));
-            constants.len() - 1
-        }
-        SrcSexpr::Float(f) => {
-            constants.push(ConstantValue::Float(f));
-            constants.len() - 1
-        }
-        SrcSexpr::String(s) => {
-            constants.push(ConstantValue::Object(ObjectValue::String(s)));
-            constants.len() - 1
+        SrcSexpr::Quote(quoted_sexpr) => {
+            compile_self_evaluation(*quoted_sexpr, code, constants, quote_level + 1);
+            // this is kinda hacky:
+            // The first level of quoting is handled by the compiler, by compiling, for example, `'x` to the literal symbol `x`
+            // in the case of `''x`, the first quote is handled by the compiler, and the second quote is handled here:
+            if quote_level >= 2 {
+                code.push(Op::Quote.into());
+            }
         }
     }
 }
@@ -294,7 +285,7 @@ fn compile_ast(ast: Ast) -> BytecodeChunk {
         .map(structure_sexpr)
         .collect::<Vec<Expression>>();
 
-    println!("{:#?}", expressions);
+    // println!("{:#?}", expressions);
 
     compile_expressions(expressions)
 }
@@ -330,7 +321,7 @@ mod tests {
 
     use crate::{
         static_stack::StaticStack,
-        vm::{SmallValue, VM},
+        vm::{SmallVal, VM},
     };
 
     use super::*;
@@ -371,7 +362,7 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(12)]))
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(12)]))
     }
 
     #[test]
@@ -395,14 +386,14 @@ mod tests {
             bc.constants,
             vec![
                 ConstantValue::Integer(11),
-                ConstantValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Object(ConstantObject::String("foo".to_string())),
             ]
         );
 
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.globals.get("foo"), Some(&SmallValue::Integer(11)))
+        assert_eq!(vm.globals.get("foo"), Some(&SmallVal::Integer(11)))
     }
 
     #[test]
@@ -424,11 +415,11 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantValue::Object(ObjectValue::String("+".to_string())),
+                ConstantValue::Object(ConstantObject::String("+".to_string())),
                 ConstantValue::Integer(11),
                 ConstantValue::Integer(12),
-                ConstantValue::Object(ObjectValue::String("foo".to_string())),
-                ConstantValue::Object(ObjectValue::String("foo".to_string())),
+                ConstantValue::Object(ConstantObject::String("foo".to_string())),
+                ConstantValue::Object(ConstantObject::String("foo".to_string())),
             ]
         );
 
@@ -454,8 +445,8 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.globals.get("foo"), Some(&SmallValue::Integer(23)));
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(23)]))
+        assert_eq!(vm.globals.get("foo"), Some(&SmallVal::Integer(23)));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(23)]))
     }
 
     #[test]
@@ -469,7 +460,7 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantValue::Object(ObjectValue::String("*".to_string())),
+                ConstantValue::Object(ConstantObject::String("*".to_string())),
                 ConstantValue::Integer(11),
                 ConstantValue::Integer(12),
             ],
@@ -510,11 +501,11 @@ mod tests {
         assert_eq!(
             bc.constants,
             vec![
-                ConstantValue::Object(ObjectValue::String("+".to_string())),
-                ConstantValue::Object(ObjectValue::String("+".to_string())),
+                ConstantValue::Object(ConstantObject::String("+".to_string())),
+                ConstantValue::Object(ConstantObject::String("+".to_string())),
                 ConstantValue::Integer(11),
                 ConstantValue::Integer(12),
-                ConstantValue::Object(ObjectValue::String("*".to_string())),
+                ConstantValue::Object(ConstantObject::String("*".to_string())),
                 ConstantValue::Integer(13),
                 ConstantValue::Integer(14),
             ]
@@ -550,7 +541,7 @@ mod tests {
         // NOTE: This test shouldn't be here but good for easy testing
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(205)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(205)]));
     }
     #[test]
     fn test_cons() {

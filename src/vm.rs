@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::default;
 use std::fmt::{Debug, Display};
 
-const STACK_SIZE: usize = 4096;
+const STACK_SIZE: usize = 4096; // will need to dial this in
 pub struct VM {
-    pub stack: StaticStack<SmallValue, STACK_SIZE>, // for testing ugh
-    pub globals: HashMap<String, SmallValue>, // same, // TODO make interface nicer
+    pub stack: StaticStack<SmallVal, STACK_SIZE>, // for testing ugh
+    pub globals: HashMap<String, SmallVal>,       // same, // TODO make interface nicer
     ip: *const u8,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
@@ -19,19 +19,20 @@ pub struct VM {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// only valid on the heap
 pub enum ObjectValue {
-    SmallValue(SmallValue),
+    SmallValue(SmallVal),
     String(String),
     Function(Function),
     Symbol(String),
     ConsCell(ConsCell),
-    Quote(*const ConstantValue),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConsCell(SmallValue, *mut ConsCell);
+pub struct ConsCell(SmallVal, *mut ConsCell);
+
 impl ConsCell {
-    pub fn new(car: SmallValue, cdr: *mut ConsCell) -> Self {
+    pub fn new(car: SmallVal, cdr: *mut ConsCell) -> Self {
         ConsCell(car, cdr)
     }
 }
@@ -59,8 +60,7 @@ impl Display for ObjectValue {
             ObjectValue::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
             ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
-            ObjectValue::Quote(c) => write!(f, "'{}", unsafe { &**c }),
-            
+            // ObjectValue::Quote(c) => write!(f, "'{}", unsafe { &**c }),
         }
     }
 }
@@ -120,29 +120,31 @@ impl Display for HeapObject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SmallValue {
+pub enum SmallVal {
     Integer(i64),
     Float(f64),
     Bool(bool),
     Nil,
     ObjectPtr(*mut HeapObject),
+    Quote(*mut HeapObject),
 }
 
-impl Display for SmallValue {
+impl Display for SmallVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SmallValue::Integer(i) => write!(f, "{}", i),
-            SmallValue::Float(fl) => write!(f, "{}", fl),
-            SmallValue::Bool(b) => write!(f, "{}", b),
-            SmallValue::Nil => write!(f, "nil"),
-            SmallValue::ObjectPtr(ptr) => write!(f, "{}", unsafe { &**ptr }),
+            SmallVal::Integer(i) => write!(f, "{}", i),
+            SmallVal::Float(fl) => write!(f, "{}", fl),
+            SmallVal::Bool(b) => write!(f, "{}", b),
+            SmallVal::Nil => write!(f, "nil"),
+            SmallVal::ObjectPtr(ptr) => write!(f, "{}", unsafe { &**ptr }),
+            SmallVal::Quote(c) => write!(f, "'{}", unsafe { &**c }),
         }
     }
 }
 
-impl default::Default for SmallValue {
+impl default::Default for SmallVal {
     fn default() -> Self {
-        SmallValue::Integer(69) // flag for debugging
+        SmallVal::Integer(69) // flag for debugging
     }
 }
 
@@ -160,17 +162,49 @@ pub enum ConstantValue {
     Float(f64),
     Boolean(bool),
     Nil,
-    Object(ObjectValue),
+    Object(ConstantObject),
 }
 
-impl SmallValue {
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstantObject {
+    String(String),
+    Function(Function),
+    Symbol(String),
+    Quote(Box<ConstantValue>), // TODO remove *const i think
+}
+
+impl ConstantObject {
+    fn as_object(&self) -> ObjectValue {
+        match self {
+            ConstantObject::String(s) => ObjectValue::String(s.clone()),
+            ConstantObject::Function(func) => ObjectValue::Function(func.clone()),
+            ConstantObject::Symbol(s) => ObjectValue::Symbol(s.clone()),
+            ConstantObject::Quote(_) => todo!("this doesn't even make sense!"),
+        }
+    }
+}
+
+impl Display for ConstantObject {
+    /// lot's of duplication going on here, can we define easy mappers between these types?
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantObject::String(s) => write!(f, "\"{}\"", s),
+            ConstantObject::Function(func) => write!(f, "function <{}>", func.name),
+            ConstantObject::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
+            ConstantObject::Quote(c) => write!(f, "'{}", *c),
+        }
+    }
+}
+
+impl SmallVal {
     fn truthy(&self) -> bool {
         match self {
-            SmallValue::Integer(i) => *i != 0,
-            SmallValue::Float(f) => *f != 0.0,
-            SmallValue::Bool(b) => *b,
-            SmallValue::Nil => false,
-            SmallValue::ObjectPtr(_) => false,
+            SmallVal::Integer(i) => *i != 0,
+            SmallVal::Float(f) => *f != 0.0,
+            SmallVal::Bool(b) => *b,
+            SmallVal::Nil => false,
+            SmallVal::ObjectPtr(_) => false,
+            SmallVal::Quote(_) => todo!(),
         }
     }
 
@@ -216,6 +250,7 @@ pub enum Op {
     ReferenceLocal = 16,
     Cons = 17, // really not sure this should be an opcode
     Print = 18,
+    Quote = 19,
     DebugEnd = 254, // ends the program
 }
 
@@ -283,7 +318,7 @@ impl VM {
         for obj in builtins() {
             let name = obj.name.clone();
             let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Function(obj)) };
-            vm.globals.insert(name, SmallValue::ObjectPtr(obj_ptr));
+            vm.globals.insert(name, SmallVal::ObjectPtr(obj_ptr));
         }
 
         vm
@@ -313,6 +348,12 @@ impl VM {
                 Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
+                Op::Quote => {
+                    let val = self.stack.pop().unwrap();
+                    let addr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
+                    self.stack.push(SmallVal::Quote(addr));
+                    self.advance();
+                }
                 Op::DebugEnd => return,
             }
         }
@@ -325,7 +366,7 @@ impl VM {
         let cdr = self.stack.pop().unwrap();
 
         let heap_obj_ptr = match cdr {
-            SmallValue::ObjectPtr(o) => unsafe {
+            SmallVal::ObjectPtr(o) => unsafe {
                 match &mut (*o).value {
                     ObjectValue::ConsCell(ref mut cdr_ptr) => self.allocate_value(
                         ObjectValue::ConsCell(ConsCell(car, cdr_ptr as *mut ConsCell)),
@@ -333,7 +374,7 @@ impl VM {
                     _ => panic!("expected cons cell"),
                 }
             },
-            SmallValue::Nil => unsafe {
+            SmallVal::Nil => unsafe {
                 self.allocate_value(ObjectValue::ConsCell(ConsCell(
                     car,
                     std::ptr::null_mut(), // This is potentially not quite right, I think we
@@ -342,7 +383,7 @@ impl VM {
             },
             other => panic!("expected object or nil, got {other}"),
         };
-        self.stack.push(SmallValue::ObjectPtr(heap_obj_ptr));
+        self.stack.push(SmallVal::ObjectPtr(heap_obj_ptr));
         self.advance();
     }
 
@@ -383,7 +424,7 @@ impl VM {
         let given_arity = self.consume_next_byte_as_byte();
 
         let func_obj = match self.stack.peek_back(given_arity as usize).unwrap() {
-            SmallValue::ObjectPtr(obj) => match &unsafe { &*obj }.value {
+            SmallVal::ObjectPtr(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(f) => f,
                 _ => panic!("expected ObjectValue::Function"),
             },
@@ -428,7 +469,7 @@ impl VM {
 
     fn handle_reference_global(&mut self) {
         let name = match self.consume_next_byte_as_constant() {
-            SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
+            SmallVal::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => s,
                 got => panic!(
                     "expected ObjectPtr to be String for reference, got {:?}",
@@ -451,7 +492,7 @@ impl VM {
         let value = self.stack.pop().unwrap();
         let name = self.consume_next_byte_as_constant();
         match name {
-            SmallValue::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
+            SmallVal::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
                 ObjectValue::String(s) => {
                     self.globals.insert(s.clone(), value);
                 }
@@ -466,12 +507,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a / b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a / b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 / b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a / b as f64),
-            _ => panic!("expected integer or float")
-
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Integer(a / b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Float(a / b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Float(a as f64 / b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Float(a / b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -480,11 +520,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a * b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a * b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 * b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a * b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Integer(a * b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Float(a * b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Float(a as f64 * b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Float(a * b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -493,11 +533,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a - b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a - b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 - b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a - b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Integer(a - b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Float(a - b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Float(a as f64 - b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Float(a - b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -506,11 +546,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a > b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a > b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 > b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a > b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Bool(a > b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Bool(a > b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Bool(a as f64 > b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Bool(a > b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -519,11 +559,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a < b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a < b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool((a as f64) < b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a < b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Bool(a < b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Bool(a < b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Bool((a as f64) < b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Bool(a < b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -532,11 +572,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a >= b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a >= b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 >= b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a >= b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Bool(a >= b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Bool(a >= b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Bool(a as f64 >= b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Bool(a >= b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -545,11 +585,11 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         self.stack.push(match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Bool(a <= b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Bool(a <= b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Bool(a as f64 <= b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Bool(a <= b as f64),
-            _ => panic!("expected integer or float")
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Bool(a <= b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Bool(a <= b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Bool(a as f64 <= b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Bool(a <= b as f64),
+            _ => panic!("expected integer or float"),
         });
         self.advance();
     }
@@ -558,18 +598,18 @@ impl VM {
         let b = self.stack.pop().unwrap();
         let a = self.stack.pop().unwrap();
         let result = match (a, b) {
-            (SmallValue::Integer(a), SmallValue::Integer(b)) => SmallValue::Integer(a + b),
-            (SmallValue::Float(a), SmallValue::Float(b)) => SmallValue::Float(a + b),
-            (SmallValue::Integer(a), SmallValue::Float(b)) => SmallValue::Float(a as f64 + b),
-            (SmallValue::Float(a), SmallValue::Integer(b)) => SmallValue::Float(a + b as f64),
-            (SmallValue::ObjectPtr(a), SmallValue::ObjectPtr(b)) => {
+            (SmallVal::Integer(a), SmallVal::Integer(b)) => SmallVal::Integer(a + b),
+            (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Float(a + b),
+            (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Float(a as f64 + b),
+            (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Float(a + b as f64),
+            (SmallVal::ObjectPtr(a), SmallVal::ObjectPtr(b)) => {
                 match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
                     (ObjectValue::String(a), ObjectValue::String(b)) => {
                         let obj_ptr = unsafe {
                             let obj_value = ObjectValue::String(a.clone() + b);
                             self.allocate_value(obj_value)
                         };
-                        SmallValue::ObjectPtr(obj_ptr)
+                        SmallVal::ObjectPtr(obj_ptr)
                     }
                     _ => todo!(),
                 }
@@ -600,20 +640,20 @@ impl VM {
         self.advance();
     }
 
-    fn consume_next_byte_as_constant(&mut self) -> SmallValue {
+    fn consume_next_byte_as_constant(&mut self) -> SmallVal {
         unsafe {
             self.ip = self.ip.add(1);
             let constant_idx = *self.ip as usize;
 
             match self.get_constant(constant_idx) {
                 // IMPORTANT: clone
-                ConstantValue::Integer(i) => SmallValue::Integer(*i),
-                ConstantValue::Float(f) => SmallValue::Float(*f),
-                ConstantValue::Boolean(b) => SmallValue::Bool(*b),
-                ConstantValue::Nil => SmallValue::Nil,
+                ConstantValue::Integer(i) => SmallVal::Integer(*i),
+                ConstantValue::Float(f) => SmallVal::Float(*f),
+                ConstantValue::Boolean(b) => SmallVal::Bool(*b),
+                ConstantValue::Nil => SmallVal::Nil,
                 ConstantValue::Object(value) => {
-                    let obj_ptr = self.allocate_value(value.clone());
-                    SmallValue::ObjectPtr(obj_ptr)
+                    let obj_ptr = self.allocate_value(value.as_object());
+                    SmallVal::ObjectPtr(obj_ptr)
                 }
             }
         }
@@ -674,7 +714,7 @@ mod tests {
             constants: vec![ConstantValue::Integer(5)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(5)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(5)]));
     }
 
     #[test]
@@ -694,7 +734,7 @@ mod tests {
             constants: vec![ConstantValue::Integer(5), ConstantValue::Integer(6)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(11))
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(11))
     }
 
     #[test]
@@ -723,7 +763,7 @@ mod tests {
                 ConstantValue::Integer(2),
             ],
         });
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(2)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(2)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) }); // idx after the last byte
     }
 
@@ -753,7 +793,7 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(3)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(3)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 
@@ -761,7 +801,7 @@ mod tests {
     fn test_string() {
         let chunk = BytecodeChunk {
             code: vec![Op::Constant.into(), 0, Op::DebugEnd.into()],
-            constants: vec![ConstantValue::Object(ObjectValue::String(
+            constants: vec![ConstantValue::Object(ConstantObject::String(
                 "Hello, world!".to_string(),
             ))],
         };
@@ -772,7 +812,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            SmallValue::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
+            SmallVal::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -795,8 +835,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Object(ObjectValue::String("foo".to_string())),
-                ConstantValue::Object(ObjectValue::String("bar".to_string())),
+                ConstantValue::Object(ConstantObject::String("foo".to_string())),
+                ConstantValue::Object(ConstantObject::String("bar".to_string())),
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -806,7 +846,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
 
         let string = match vm.stack.peek_top().unwrap() {
-            SmallValue::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
+            SmallVal::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
                 ObjectValue::String(str) => str,
                 _ => panic!(),
             },
@@ -828,8 +868,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Integer(5),                                     // value
-                ConstantValue::Object(ObjectValue::String("foo".to_string())), // name
+                ConstantValue::Integer(5),                                        // value
+                ConstantValue::Object(ConstantObject::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -839,7 +879,7 @@ mod tests {
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 0);
         assert_eq!(vm.globals.len(), num_globals_before + 1);
-        assert_eq!(vm.globals.get("foo").unwrap(), &SmallValue::Integer(5));
+        assert_eq!(vm.globals.get("foo").unwrap(), &SmallVal::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(4) });
     }
 
@@ -856,8 +896,8 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Integer(5),                                     // value
-                ConstantValue::Object(ObjectValue::String("foo".to_string())), // name
+                ConstantValue::Integer(5),                                        // value
+                ConstantValue::Object(ConstantObject::String("foo".to_string())), // name
             ],
         };
         let ptr = chunk.code.as_ptr();
@@ -865,7 +905,7 @@ mod tests {
         let mut vm = VM::default();
         vm.run(chunk);
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(5));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(5));
         assert_eq!(vm.ip, unsafe { ptr.add(6) });
     }
 
@@ -884,7 +924,7 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Object(ObjectValue::Function(
+                ConstantValue::Object(ConstantObject::Function(
                     Function {
                         name: "asdf".to_string(),
                         arity: 2,
@@ -909,8 +949,8 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(50));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(50)]));
     }
 
     #[test]
@@ -928,7 +968,7 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Object(ObjectValue::Function(
+                ConstantValue::Object(ConstantObject::Function(
                     Function {
                         name: "asdf".to_string(),
                         arity: 2,
@@ -953,8 +993,8 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(bc);
-        assert_eq!(vm.stack.peek_top().unwrap(), &SmallValue::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([SmallValue::Integer(50)]));
+        assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(50));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(50)]));
     }
 
     // this is so jank but it'll do!
@@ -975,13 +1015,13 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         let cell = match vm.stack.peek_top().unwrap() {
-            SmallValue::ObjectPtr(v) => match &unsafe { &**v }.value {
+            SmallVal::ObjectPtr(v) => match &unsafe { &**v }.value {
                 ObjectValue::ConsCell(cell) => cell,
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        assert_eq!(cell.0, SmallValue::Integer(30));
+        assert_eq!(cell.0, SmallVal::Integer(30));
         assert_eq!(cell.1, std::ptr::null_mut());
     }
 
@@ -1009,13 +1049,13 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         let cell = match *vm.stack.peek_top().unwrap() {
-            SmallValue::ObjectPtr(v) => match &unsafe { &*v }.value {
+            SmallVal::ObjectPtr(v) => match &unsafe { &*v }.value {
                 ObjectValue::ConsCell(cell) => cell,
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        assert_eq!(&cell.0, &SmallValue::Integer(10));
+        assert_eq!(&cell.0, &SmallVal::Integer(10));
     }
 
     impl<T: Default + Copy, const MAX: usize, const N: usize> From<[T; N]> for StaticStack<T, MAX> {

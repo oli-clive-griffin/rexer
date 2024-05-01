@@ -39,7 +39,7 @@ pub fn repl() {
     }
 }
 
-fn run_string(input: String, session: &mut evaluator::Session) -> Result<sexpr::RuntimeExpr, String> {
+fn run_string(input: String, session: &mut evaluator::Session) -> Result<sexpr::EvauluatorRuntimeValue, String> {
     let tokens = lexer::lex(&input)?;
     let sexpr = parser::parse_sexpr(&tokens)?.0;
     session.eval(sexpr.to_sexpr())
