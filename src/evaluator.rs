@@ -4,11 +4,11 @@ use std::iter;
 
 use crate::builtins::BUILT_INS;
 use crate::parser::Ast;
-use crate::sexpr::EvauluatorRuntimeValue;
+use crate::sexpr::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Scope {
-    bindings: HashMap<String, EvauluatorRuntimeValue>,
+    bindings: HashMap<String, Sexpr>,
 }
 
 impl Scope {
@@ -17,13 +17,13 @@ impl Scope {
             bindings: HashMap::from_iter(BUILT_INS.map(|builtin| {
                 (
                     builtin.symbol.to_string(),
-                    EvauluatorRuntimeValue::BuiltIn(builtin),
+                    Sexpr::BuiltIn(builtin),
                 )
             })),
         }
     }
 
-    fn with_bindings(&self, bindings: &[(String, EvauluatorRuntimeValue)]) -> Scope {
+    fn with_bindings(&self, bindings: &[(String, Sexpr)]) -> Scope {
         let mut new_bindings = self.bindings.clone();
         new_bindings.extend(bindings.iter().cloned());
 
@@ -33,72 +33,72 @@ impl Scope {
     }
 }
 
-impl EvauluatorRuntimeValue {
-    fn eval(self, scope: &Scope) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+impl Sexpr {
+    fn eval(self, scope: &Scope) -> Result<(Sexpr, Scope), String> {
         match self {
-            EvauluatorRuntimeValue::List(sexprs) => eval_list(sexprs, scope), // todo remove this arg
-            EvauluatorRuntimeValue::QuasiQuotedList(sexprs) => {
+            Sexpr::List(sexprs) => eval_list(sexprs, scope),
+            Sexpr::QuasiQuotedList(sexprs) => {
                 let res = sexprs
-                    .iter()
+                    .into_iter()
                     .map(|sexpr| match sexpr {
-                        EvauluatorRuntimeValue::CommaUnquote(sexpr) => {
+                        Sexpr::CommaUnquote(sexpr) => {
                             sexpr.clone().eval(scope).map(|r| r.0)
                         }
-                        sexpr => Ok(sexpr.clone()),
+                        sexpr => Ok(sexpr),
                     })
-                    .collect::<Result<Vec<EvauluatorRuntimeValue>, String>>()?;
+                    .collect::<Result<Vec<Sexpr>, String>>()?;
 
-                Ok((EvauluatorRuntimeValue::List(res), scope.clone()))
+                Ok((Sexpr::List(res), scope.clone()))
             }
-            EvauluatorRuntimeValue::Quote(sexpr) => Ok((*sexpr, scope.clone())),
-            EvauluatorRuntimeValue::Symbol(sym) => match sym.as_str() {
-                "nil" => Ok((EvauluatorRuntimeValue::Nil, scope.clone())),
+            Sexpr::Quote(sexpr) => Ok((*sexpr, scope.clone())),
+            Sexpr::Symbol(sym) => match sym.as_str() {
+                "nil" => Ok((Sexpr::Nil, scope.clone())),
                 _ => match scope.bindings.get(&sym) {
                     Some(sexpr) => Ok((sexpr.clone(), scope.clone())),
                     None => Err(format!("Symbol {} not found in scope", sym)),
                 },
             },
             // self-evaluating S-expressions
-            EvauluatorRuntimeValue::String(_)
-            | EvauluatorRuntimeValue::Bool(_)
-            | EvauluatorRuntimeValue::Int(_)
-            | EvauluatorRuntimeValue::Float(_)
-            | EvauluatorRuntimeValue::BuiltIn(_)
-            | EvauluatorRuntimeValue::CommaUnquote(_)
-            | EvauluatorRuntimeValue::Macro {
+            Sexpr::String(_)
+            | Sexpr::Bool(_)
+            | Sexpr::Int(_)
+            | Sexpr::Float(_)
+            | Sexpr::BuiltIn(_)
+            | Sexpr::CommaUnquote(_)
+            | Sexpr::Macro {
                 parameters: _,
                 body: _,
             }
-            | EvauluatorRuntimeValue::Function {
+            | Sexpr::Function {
                 parameters: _,
                 body: _,
             }
-            | EvauluatorRuntimeValue::Nil => Ok((self, scope.clone())),
+            | Sexpr::Nil => Ok((self, scope.clone())),
         }
     }
 }
 
 fn eval_list(
-    list: Vec<EvauluatorRuntimeValue>,
+    list: Vec<Sexpr>,
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     if list.is_empty() {
-        return Ok((EvauluatorRuntimeValue::List(vec![]), scope.clone()));
+        return Ok((Sexpr::List(vec![]), scope.clone()));
     }
 
     let (first, rest) = list.split_first().unwrap();
 
     // FIXME fix this clone
     match first.clone() {
-        EvauluatorRuntimeValue::Quote(sexpr) => Ok((*sexpr, scope.clone())),
-        EvauluatorRuntimeValue::Symbol(symbol) => match symbol.as_str() {
+        Sexpr::Quote(sexpr) => Ok((*sexpr, scope.clone())),
+        Sexpr::Symbol(symbol) => match symbol.as_str() {
             "lambda" => eval_rest_as_lambda(rest, scope),
             "macro" => eval_rest_as_macro_declaration(rest, scope),
             "if" => eval_rest_as_if(rest, scope),
             "let" => eval_rest_as_let(rest, scope),
             "fn" => {
                 let (result, scope) = eval_rest_as_function_declaration(rest, scope)?;
-                if let EvauluatorRuntimeValue::Function {
+                if let Sexpr::Function {
                     parameters: _,
                     body: _,
                 } = &result
@@ -121,17 +121,17 @@ fn eval_list(
                 eval_list(
                     iter::once(head)
                         .chain(rest.iter().cloned())
-                        .collect::<Vec<EvauluatorRuntimeValue>>(),
+                        .collect::<Vec<Sexpr>>(),
                     scope,
                 )
             }
         },
-        EvauluatorRuntimeValue::Function { parameters, body } => {
+        Sexpr::Function { parameters, body } => {
             let arguments = rest
                 .iter()
                 .cloned()
                 .map(|arg| arg.eval(scope).map(|r| r.0))
-                .collect::<Result<Vec<EvauluatorRuntimeValue>, String>>()?;
+                .collect::<Result<Vec<Sexpr>, String>>()?;
 
             if parameters.len() != arguments.len() {
                 return Err("Function called with incorrect number of arguments".to_string());
@@ -142,12 +142,12 @@ fn eval_list(
                 .iter()
                 .cloned()
                 .zip(arguments.iter().cloned())
-                .collect::<Vec<(String, EvauluatorRuntimeValue)>>();
+                .collect::<Vec<(String, Sexpr)>>();
 
             let func_scope = scope.with_bindings(&bindings);
             sequential_eval(body.clone().to_vec(), &func_scope)
         }
-        EvauluatorRuntimeValue::Macro { parameters, body } => {
+        Sexpr::Macro { parameters, body } => {
             // DON'T EVALUATE THE MACRO BODY
             let arguments = rest;
 
@@ -163,65 +163,65 @@ fn eval_list(
                 .iter()
                 .cloned()
                 .zip(arguments.iter().cloned())
-                .collect::<Vec<(String, EvauluatorRuntimeValue)>>();
+                .collect::<Vec<(String, Sexpr)>>();
 
             // create a new scope with the macro_bindings for inside the macro
             let macro_scope = &scope.with_bindings(&macro_bindings);
             let expanded = body.clone().eval(macro_scope)?.0; // evaluate the macro
             Ok((expanded.eval(scope)?.0, scope.clone())) // evaluate the result of the macro in the original scope
         }
-        EvauluatorRuntimeValue::List(sexprs) => {
+        Sexpr::List(sexprs) => {
             // let head = sexprs[0].clone().eval(scope)?.0;
             let head = eval_list(sexprs.to_vec(), scope)?.0;
 
             eval_list(
                 iter::once(head)
                     .chain(sexprs[1..].iter().cloned())
-                    .collect::<Vec<EvauluatorRuntimeValue>>(),
+                    .collect::<Vec<Sexpr>>(),
                 scope,
             )
         }
 
-        EvauluatorRuntimeValue::QuasiQuotedList(_l) => {
+        Sexpr::QuasiQuotedList(_l) => {
             panic!("cannot call a quasi-quoted list");
         }
 
-        EvauluatorRuntimeValue::BuiltIn(builtin) => {
+        Sexpr::BuiltIn(builtin) => {
             let arguments = rest
                 .iter()
                 .cloned()
                 .map(|arg| arg.eval(scope).map(|r| r.0))
-                .collect::<Result<Vec<EvauluatorRuntimeValue>, String>>()?;
+                .collect::<Result<Vec<Sexpr>, String>>()?;
             Ok((builtin.eval(&arguments)?, scope.clone()))
         }
 
         // Error cases
-        EvauluatorRuntimeValue::CommaUnquote(_) => Err("CommaUnquote in wrong context".to_string()),
-        EvauluatorRuntimeValue::String(_) => Err("Cannot call string value".to_string()),
-        EvauluatorRuntimeValue::Bool(_) => Err("Cannot call boolean value".to_string()),
-        EvauluatorRuntimeValue::Int(_) => Err("Cannot call int value".to_string()),
-        EvauluatorRuntimeValue::Float(_) => Err("Cannot call float value".to_string()),
-        EvauluatorRuntimeValue::Nil => Err("Cannot call nil".to_string()),
+        Sexpr::CommaUnquote(_) => Err("CommaUnquote in wrong context".to_string()),
+        Sexpr::String(_) => Err("Cannot call string value".to_string()),
+        Sexpr::Bool(_) => Err("Cannot call boolean value".to_string()),
+        Sexpr::Int(_) => Err("Cannot call int value".to_string()),
+        Sexpr::Float(_) => Err("Cannot call float value".to_string()),
+        Sexpr::Nil => Err("Cannot call nil".to_string()),
     }
 }
 
 fn eval_rest_as_function_declaration(
-    rest: &[EvauluatorRuntimeValue],
+    rest: &[Sexpr],
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     match &rest[0] {
-        EvauluatorRuntimeValue::List(sexprs) => {
+        Sexpr::List(sexprs) => {
             // (<function_name> <arg1> <arg2>)
-            if let EvauluatorRuntimeValue::Symbol(func_name) = &sexprs[0] {
+            if let Sexpr::Symbol(func_name) = &sexprs[0] {
                 let arg_names = sexprs[1..]
                     .iter()
                     .map(|expr| match expr {
-                        EvauluatorRuntimeValue::Symbol(name) => Ok(name.clone()),
+                        Sexpr::Symbol(name) => Ok(name.clone()),
                         _ => Err("Function arguments must be identifiers".to_string()),
                     })
                     .collect::<Result<Vec<String>, String>>()?;
 
-                let function = EvauluatorRuntimeValue::Function {
+                let function = Sexpr::Function {
                     parameters: arg_names,
                     body: rest[1..].to_vec(),
                 };
@@ -237,38 +237,31 @@ fn eval_rest_as_function_declaration(
 }
 
 fn eval_rest_as_lambda(
-    rest: &[EvauluatorRuntimeValue],
+    rest: &[Sexpr],
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     let args = parse_as_args(&rest[0])?;
     let fn_body = rest[1..].to_vec();
 
-    // TODO closures ???
-    // substitute scope into fn_body ???
-    // actually should be easy as everything is pure and passed by value
-    let _ = scope;
-
     Ok((
-        EvauluatorRuntimeValue::Function {
+        Sexpr::Function {
             parameters: args,
             body: fn_body,
         },
+        // this handles closures easily cos no mutation
         scope.clone(),
     ))
 }
 
 fn eval_rest_as_macro_declaration(
-    rest: &[EvauluatorRuntimeValue],
+    rest: &[Sexpr],
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     let args = parse_as_args(&rest[0])?;
     let fn_body = &rest[1];
 
-    // todo substitute scope into fn_body
-    let _ = scope;
-
     Ok((
-        EvauluatorRuntimeValue::Macro {
+        Sexpr::Macro {
             parameters: args,
             body: Box::new(fn_body.clone()),
         },
@@ -277,9 +270,9 @@ fn eval_rest_as_macro_declaration(
 }
 
 fn eval_rest_as_let(
-    rest: &[EvauluatorRuntimeValue],
+    rest: &[Sexpr],
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     let binding_exprs = rest[..rest.len() - 1].to_vec();
     let expr = rest
         .last()
@@ -289,9 +282,9 @@ fn eval_rest_as_let(
 }
 
 fn eval_rest_as_if(
-    rest: &[EvauluatorRuntimeValue],
+    rest: &[Sexpr],
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     if rest.len() != 3 {
         return Err("malformed if statement: Must have 3 arguments".to_string());
     }
@@ -299,8 +292,7 @@ fn eval_rest_as_if(
     let if_body = rest[1].clone();
     let else_body = rest[2].clone();
 
-    // TODO: encapse this is Sexpr.bool()
-    if let EvauluatorRuntimeValue::Bool(cond) = condition.eval(scope)?.0 {
+    if let Sexpr::Bool(cond) = condition.eval(scope)?.0 {
         (if cond { if_body } else { else_body }).eval(scope)
     } else {
         Err("If condition must be a boolean".to_string())
@@ -308,17 +300,17 @@ fn eval_rest_as_if(
 }
 
 fn generate_let_bindings(
-    list: Vec<EvauluatorRuntimeValue>,
+    list: Vec<Sexpr>,
     scope: &Scope,
-) -> Result<Vec<(String, EvauluatorRuntimeValue)>, String> {
+) -> Result<Vec<(String, Sexpr)>, String> {
     list.iter()
         .cloned()
         .map(|node| match node {
-            EvauluatorRuntimeValue::List(sexprs) => {
+            Sexpr::List(sexprs) => {
                 if sexprs.len() != 2 {
                     return Err("let binding must be a list of two elements".to_string());
                 }
-                if let EvauluatorRuntimeValue::Symbol(ident) = &sexprs[0] {
+                if let Sexpr::Symbol(ident) = &sexprs[0] {
                     let val = sexprs[1].clone().eval(scope)?.0;
                     Ok((ident.clone(), val.clone()))
                 } else {
@@ -327,15 +319,15 @@ fn generate_let_bindings(
             }
             _ => Err("All bindings must be lists".to_string()),
         })
-        .collect::<Result<Vec<(String, EvauluatorRuntimeValue)>, String>>()
+        .collect::<Result<Vec<(String, Sexpr)>, String>>()
 }
 
-fn parse_as_args(expr: &EvauluatorRuntimeValue) -> Result<Vec<String>, String> {
+fn parse_as_args(expr: &Sexpr) -> Result<Vec<String>, String> {
     match expr {
-        EvauluatorRuntimeValue::List(sexprs) => sexprs
+        Sexpr::List(sexprs) => sexprs
             .iter()
             .map(|e| match e {
-                EvauluatorRuntimeValue::Symbol(ident) => Ok(ident.clone()),
+                Sexpr::Symbol(ident) => Ok(ident.clone()),
                 _ => Err("Function arguments must be identifiers".to_string()),
             })
             .collect::<Result<Vec<String>, String>>(),
@@ -344,11 +336,11 @@ fn parse_as_args(expr: &EvauluatorRuntimeValue) -> Result<Vec<String>, String> {
 }
 
 fn sequential_eval(
-    list: Vec<EvauluatorRuntimeValue>,
+    list: Vec<Sexpr>,
     scope: &Scope,
-) -> Result<(EvauluatorRuntimeValue, Scope), String> {
+) -> Result<(Sexpr, Scope), String> {
     list.into_iter().fold(
-        Ok((EvauluatorRuntimeValue::Nil, scope.clone())),
+        Ok((Sexpr::Nil, scope.clone())),
         |acc, item| {
             acc.and_then(|(_res, mut new_scope)| {
                 let (evaluated, updated_scope) = item.eval(&new_scope)?;
@@ -363,7 +355,7 @@ fn sequential_eval(
 /// and just evaluate it.
 /// Obvious next steps are to allow for multiple SExprs (lines)
 /// and to manage a global scope being passed between them.
-pub fn evaluate(ast: Ast) -> Result<EvauluatorRuntimeValue, String> {
+pub fn evaluate(ast: Ast) -> Result<Sexpr, String> {
     sequential_eval(
         ast.expressions.into_iter().map(|e| e.to_sexpr()).collect(),
         &Scope::new(),
@@ -371,38 +363,38 @@ pub fn evaluate(ast: Ast) -> Result<EvauluatorRuntimeValue, String> {
     .map(|r| r.0)
 }
 
-impl Display for EvauluatorRuntimeValue {
+impl Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EvauluatorRuntimeValue::List(sexprs) => write_sexpr_vec(f, sexprs),
-            EvauluatorRuntimeValue::Quote(sexpr) => write!(f, "'{}", sexpr),
-            EvauluatorRuntimeValue::QuasiQuotedList(sexprs) => {
+            Sexpr::List(sexprs) => write_sexpr_vec(f, sexprs),
+            Sexpr::Quote(sexpr) => write!(f, "'{}", sexpr),
+            Sexpr::QuasiQuotedList(sexprs) => {
                 write!(f, "`")?;
                 write_sexpr_vec(f, sexprs)
             }
-            EvauluatorRuntimeValue::Symbol(sym) => write!(f, "{}", sym), // might want :{} later
-            EvauluatorRuntimeValue::String(str) => write!(f, "\"{}\"", str),
-            EvauluatorRuntimeValue::Bool(b) => write!(f, "{}", b),
-            EvauluatorRuntimeValue::Int(i) => write!(f, "{}", i),
-            EvauluatorRuntimeValue::Float(fl) => write!(f, "{}", fl),
-            EvauluatorRuntimeValue::Function {
+            Sexpr::Symbol(sym) => write!(f, "{}", sym), // might want :{} later
+            Sexpr::String(str) => write!(f, "\"{}\"", str),
+            Sexpr::Bool(b) => write!(f, "{}", b),
+            Sexpr::Int(i) => write!(f, "{}", i),
+            Sexpr::Float(fl) => write!(f, "{}", fl),
+            Sexpr::Function {
                 parameters: _,
                 body: _,
             } => write!(f, "Function"),
-            EvauluatorRuntimeValue::Macro {
+            Sexpr::Macro {
                 parameters: _,
                 body: _,
             } => write!(f, "Macro"),
-            EvauluatorRuntimeValue::BuiltIn(b) => write!(f, "<builtin: {}>", b.symbol),
-            EvauluatorRuntimeValue::CommaUnquote(sexpr) => write!(f, ",{}", sexpr),
-            EvauluatorRuntimeValue::Nil => write!(f, "nil"),
+            Sexpr::BuiltIn(b) => write!(f, "<builtin: {}>", b.symbol),
+            Sexpr::CommaUnquote(sexpr) => write!(f, ",{}", sexpr),
+            Sexpr::Nil => write!(f, "nil"),
         }
     }
 }
 
 fn write_sexpr_vec(
     f: &mut std::fmt::Formatter,
-    sexprs: &[EvauluatorRuntimeValue],
+    sexprs: &[Sexpr],
 ) -> Result<(), std::fmt::Error> {
     write!(f, "(")?;
     for (i, sexpr) in sexprs.iter().enumerate() {
@@ -434,7 +426,7 @@ impl Session {
 
     /// Evaluates a single expression, mutating the session's scope
     /// and returning the result of the evaluation.
-    pub fn eval(&mut self, expr: EvauluatorRuntimeValue) -> Result<EvauluatorRuntimeValue, String> {
+    pub fn eval(&mut self, expr: Sexpr) -> Result<Sexpr, String> {
         let (res, new_scope) = expr.eval(&self.scope)?;
         self.scope = new_scope;
         Ok(res)
@@ -447,55 +439,55 @@ mod tests {
 
     #[test]
     fn test1() -> Result<(), String> {
-        let expr = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("+".to_string()),
-            EvauluatorRuntimeValue::Int(1),
-            EvauluatorRuntimeValue::Int(2),
+        let expr = Sexpr::List(vec![
+            Sexpr::Symbol("+".to_string()),
+            Sexpr::Int(1),
+            Sexpr::Int(2),
         ]);
         let output = expr.eval(&Scope::new())?.0;
-        assert_eq!(output, EvauluatorRuntimeValue::Int(3));
+        assert_eq!(output, Sexpr::Int(3));
         Ok(())
     }
 
     #[test]
     fn test2() -> Result<(), String> {
-        let sexpr = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("+".to_string()),
-            EvauluatorRuntimeValue::Int(1),
-            EvauluatorRuntimeValue::Int(2),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("-".to_string()),
-                EvauluatorRuntimeValue::Int(4),
-                EvauluatorRuntimeValue::Int(3),
+        let sexpr = Sexpr::List(vec![
+            Sexpr::Symbol("+".to_string()),
+            Sexpr::Int(1),
+            Sexpr::Int(2),
+            Sexpr::List(vec![
+                Sexpr::Symbol("-".to_string()),
+                Sexpr::Int(4),
+                Sexpr::Int(3),
             ]),
-            EvauluatorRuntimeValue::Int(5),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("*".to_string()),
-                EvauluatorRuntimeValue::Int(1),
-                EvauluatorRuntimeValue::Int(2),
+            Sexpr::Int(5),
+            Sexpr::List(vec![
+                Sexpr::Symbol("*".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Int(2),
             ]),
         ]);
         let res = sexpr.eval(&Scope::new())?.0;
-        assert_eq!(res, EvauluatorRuntimeValue::Int(11));
+        assert_eq!(res, Sexpr::Int(11));
         Ok(())
     }
 
     #[test]
     fn test3() -> Result<(), String> {
-        let sexpr = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("let".to_string()),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("x".to_string()),
-                EvauluatorRuntimeValue::Int(2),
+        let sexpr = Sexpr::List(vec![
+            Sexpr::Symbol("let".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("x".to_string()),
+                Sexpr::Int(2),
             ]),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("*".to_string()),
-                EvauluatorRuntimeValue::Symbol("x".to_string()),
-                EvauluatorRuntimeValue::Int(3),
+            Sexpr::List(vec![
+                Sexpr::Symbol("*".to_string()),
+                Sexpr::Symbol("x".to_string()),
+                Sexpr::Int(3),
             ]),
         ]);
         let res = sexpr.eval(&Scope::new())?.0;
-        assert_eq!(res, EvauluatorRuntimeValue::Int(6));
+        assert_eq!(res, Sexpr::Int(6));
         Ok(())
     }
 
@@ -506,31 +498,31 @@ mod tests {
          *   (switch (macro (a b) (quote (b a))))
          *   (switch 3 inc))
          */
-        let ast = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("let".to_string()),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("switch".to_string()),
-                EvauluatorRuntimeValue::List(vec![
-                    EvauluatorRuntimeValue::Symbol("macro".to_string()),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
+        let ast = Sexpr::List(vec![
+            Sexpr::Symbol("let".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("switch".to_string()),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("macro".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("a".to_string()),
+                        Sexpr::Symbol("b".to_string()),
                     ]),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("list".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("list".to_string()),
+                        Sexpr::Symbol("b".to_string()),
+                        Sexpr::Symbol("a".to_string()),
                     ]),
                 ]),
             ]),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("switch".to_string()),
-                EvauluatorRuntimeValue::Int(1),
-                EvauluatorRuntimeValue::Symbol("inc".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("switch".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Symbol("inc".to_string()),
             ]),
         ]);
         let res = ast.eval(&Scope::new())?.0;
-        assert_eq!(res, EvauluatorRuntimeValue::Int(2));
+        assert_eq!(res, Sexpr::Int(2));
         Ok(())
     }
 
@@ -541,31 +533,31 @@ mod tests {
          *   (switch (macro (a b) (quote (b a))))
          *   (switch 3 inc))
          */
-        let ast = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("let".to_string()),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("switch".to_string()),
-                EvauluatorRuntimeValue::List(vec![
-                    EvauluatorRuntimeValue::Symbol("macro".to_string()),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
+        let ast = Sexpr::List(vec![
+            Sexpr::Symbol("let".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("switch".to_string()),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("macro".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("a".to_string()),
+                        Sexpr::Symbol("b".to_string()),
                     ]),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("list".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("list".to_string()),
+                        Sexpr::Symbol("b".to_string()),
+                        Sexpr::Symbol("a".to_string()),
                     ]),
                 ]),
             ]),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("switch".to_string()),
-                EvauluatorRuntimeValue::Int(1),
-                EvauluatorRuntimeValue::Symbol("inc".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("switch".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Symbol("inc".to_string()),
             ]),
         ]);
         let res = ast.eval(&Scope::new())?.0;
-        assert_eq!(res, EvauluatorRuntimeValue::Int(2));
+        assert_eq!(res, Sexpr::Int(2));
         Ok(())
     }
 
@@ -576,33 +568,33 @@ mod tests {
          *   (infix (macro (a op b) (list op a b)))
          *   (infix 1 + 2))
          */
-        let ast = EvauluatorRuntimeValue::List(vec![
-            EvauluatorRuntimeValue::Symbol("let".to_string()),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("infix".to_string()),
-                EvauluatorRuntimeValue::List(vec![
-                    EvauluatorRuntimeValue::Symbol("macro".to_string()),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
-                        EvauluatorRuntimeValue::Symbol("op".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
+        let ast = Sexpr::List(vec![
+            Sexpr::Symbol("let".to_string()),
+            Sexpr::List(vec![
+                Sexpr::Symbol("infix".to_string()),
+                Sexpr::List(vec![
+                    Sexpr::Symbol("macro".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("a".to_string()),
+                        Sexpr::Symbol("op".to_string()),
+                        Sexpr::Symbol("b".to_string()),
                     ]),
-                    EvauluatorRuntimeValue::List(vec![
-                        EvauluatorRuntimeValue::Symbol("list".to_string()),
-                        EvauluatorRuntimeValue::Symbol("op".to_string()),
-                        EvauluatorRuntimeValue::Symbol("a".to_string()),
-                        EvauluatorRuntimeValue::Symbol("b".to_string()),
+                    Sexpr::List(vec![
+                        Sexpr::Symbol("list".to_string()),
+                        Sexpr::Symbol("op".to_string()),
+                        Sexpr::Symbol("a".to_string()),
+                        Sexpr::Symbol("b".to_string()),
                     ]),
                 ]),
             ]),
-            EvauluatorRuntimeValue::List(vec![
-                EvauluatorRuntimeValue::Symbol("infix".to_string()),
-                EvauluatorRuntimeValue::Int(1),
-                EvauluatorRuntimeValue::Symbol("+".to_string()),
-                EvauluatorRuntimeValue::Int(2),
+            Sexpr::List(vec![
+                Sexpr::Symbol("infix".to_string()),
+                Sexpr::Int(1),
+                Sexpr::Symbol("+".to_string()),
+                Sexpr::Int(2),
             ]),
         ]);
-        assert_eq!(ast.eval(&Scope::new())?.0, EvauluatorRuntimeValue::Int(3));
+        assert_eq!(ast.eval(&Scope::new())?.0, Sexpr::Int(3));
         Ok(())
     }
 }

@@ -66,6 +66,11 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
                 let idx = bc.code[pc];
                 format!("ReferenceLocal\n  idx: {idx}")
             }
+            Op::Define => {
+                pc += 1;
+                let idx = bc.code[pc];
+                format!("Define\n  idx: {idx}")
+            }
             Op::GT => "GT".to_string(),
             Op::LT => "LT".to_string(),
             Op::GTE => "GTE".to_string(),

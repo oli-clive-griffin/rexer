@@ -3,7 +3,7 @@ use crate::{
     sexpr::SrcSexpr,
 };
 
-pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
+pub fn structure_sexpr(sexpr: &SrcSexpr, in_function: bool) -> Expression {
     match sexpr {
         SrcSexpr::Symbol(a) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())),
         SrcSexpr::String(a) => Expression::SrcSexpr(SrcSexpr::String(a.clone())),
@@ -12,24 +12,29 @@ pub fn structure_sexpr(sexpr: &SrcSexpr) -> Expression {
         SrcSexpr::Float(a) => Expression::SrcSexpr(SrcSexpr::Float(*a)),
         SrcSexpr::Quote(sexpr) => Expression::SrcSexpr(SrcSexpr::Quote(Box::new(*sexpr.clone()))),
         SrcSexpr::List(sexprs) => {
-            if let Some(special_form) = map_to_special_form(sexprs) {
+            if let Some(special_form) = map_to_special_form(sexprs, in_function) {
                 return special_form;
             }
-            Expression::RegularForm(sexprs.iter().map(structure_sexpr).collect())
+            Expression::RegularForm(
+                sexprs
+                    .iter()
+                    .map(|s| structure_sexpr(s, in_function))
+                    .collect(),
+            )
         }
     }
 }
 
-fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
+fn map_to_special_form(sexprs: &[SrcSexpr], in_function: bool) -> Option<Expression> {
     let (head, rest) = sexprs.split_first().unwrap();
 
     if let SrcSexpr::Symbol(sym) = head {
         match sym.as_str() {
             "if" => {
                 return Some(Expression::If {
-                    condition: Box::new(structure_sexpr(&rest[0])),
-                    then: Box::new(structure_sexpr(&rest[1])),
-                    else_: Box::new(structure_sexpr(&rest[2])),
+                    condition: Box::new(structure_sexpr(&rest[0], in_function)),
+                    then: Box::new(structure_sexpr(&rest[1], in_function)),
+                    else_: Box::new(structure_sexpr(&rest[2], in_function)),
                 });
             }
             "quote" => {
@@ -37,19 +42,29 @@ fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
                     panic!("quote expects 1 argument")
                 }
                 return Some(Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-                    rest[1].clone(),
+                    rest[0].clone(),
                 ))));
             }
             "define" => {
                 if rest.len() != 2 {
                     panic!("define expects 2 arguments, got {:?}", rest)
                 }
-                return Some(Expression::Define {
-                    name: match &rest[0] {
-                        SrcSexpr::Symbol(s) => s.clone(),
-                        _ => panic!("define expects symbol as first argument"),
-                    },
-                    value: Box::new(structure_sexpr(&rest[1])),
+
+                let name = match &rest[0] {
+                    SrcSexpr::Symbol(s) => s.clone(),
+                    _ => panic!("define expects symbol as first argument"),
+                };
+
+                let value = Box::new(structure_sexpr(&rest[1], in_function));
+                r#"
+                (define a 1)
+                (defun (x)
+                    (define y 1))
+                "#;
+                return Some(if in_function {
+                    Expression::LocalDefine { name, value }
+                } else {
+                    Expression::DeclareGlobal { name, value }
                 });
             }
             "defun" => {
@@ -76,7 +91,10 @@ fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
                     ),
                 };
 
-                let body_expressions = body_sexprs.iter().map(structure_sexpr).collect();
+                let body_expressions = body_sexprs
+                    .iter()
+                    .map(|s| structure_sexpr(s, true))
+                    .collect();
 
                 return Some(Expression::GlobalFunctionDeclaration {
                     name,
@@ -97,7 +115,10 @@ fn map_to_special_form(sexprs: &[SrcSexpr]) -> Option<Expression> {
                     _ => panic!("expected list for function parameters"),
                 };
 
-                let body_expressions = body_sexprs.iter().map(structure_sexpr).collect();
+                let body_expressions = body_sexprs
+                    .iter()
+                    .map(|s| structure_sexpr(s, true))
+                    .collect();
 
                 return Some(Expression::FunctionLiteral(FunctionExpression::new(
                     parameters,

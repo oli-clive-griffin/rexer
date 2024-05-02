@@ -10,7 +10,9 @@ use crate::{
 // The goal is to get this to be `SrcSexpr`
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
+    // (if a b c)
     SrcSexpr(SrcSexpr),
+
     RegularForm(Vec<Expression>),
 
     /// (if condition then else)
@@ -21,7 +23,7 @@ pub enum Expression {
     },
 
     /// (define name value)
-    Define {
+    LocalDefine {
         name: String,
         value: Box<Expression>,
     },
@@ -58,29 +60,22 @@ impl FunctionExpression {
     }
 }
 
+struct ChunkCompiler {
+    constants: Vec<ConstantValue>,
+    local_and_arg_tracker: Vec<String>,
+    parent: Option<Box<ChunkCompiler>>,
+}
+
 fn compile_expression(
     expression: Expression,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
-    locals: &mut Vec<String>,
+    local_and_arg_tracker: &mut Vec<String>,
 ) {
     match expression {
         Expression::SrcSexpr(sexpr) => match sexpr {
             SrcSexpr::Symbol(sym) => {
-                // evaulate as reference as opposed to value
-                // local / function argument
-                let local_idx = locals.iter().position(|x| x == &sym);
-                if let Some(idx) = local_idx {
-                    code.push(Op::ReferenceLocal.into());
-                    code.push((idx + 1) as u8); // plus 1 because locals are 1-indexed
-                    return;
-                }
-                // fall back to global
-                code.push(Op::ReferenceGlobal.into());
-                // this can be optimized by reusing the same constant for the same symbol
-                // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
-                constants.push(ConstantValue::Object(ConstantObject::String(sym)));
-                code.push(constants.len() as u8 - 1);
+                compile_symbol_as_reference(local_and_arg_tracker, sym, code, constants);
             }
             SrcSexpr::Bool(_) | SrcSexpr::Int(_) | SrcSexpr::Float(_) | SrcSexpr::String(_) => {
                 compile_self_evaluation(sexpr, code, constants, 0)
@@ -94,21 +89,71 @@ fn compile_expression(
             condition,
             then,
             else_,
-        } => compile_if_statement(condition, code, constants, locals, else_, then),
+        } => compile_if_statement(
+            condition,
+            code,
+            constants,
+            local_and_arg_tracker,
+            else_,
+            then,
+        ),
         Expression::DeclareGlobal { name, value } => {
-            compile_global_declaration(value, code, constants, locals, name)
+            compile_global_declaration(value, code, constants, local_and_arg_tracker, name)
         }
-        Expression::RegularForm(exprs) => compile_regular_form(exprs, code, constants, locals),
+        Expression::RegularForm(exprs) => {
+            compile_regular_form(exprs, code, constants, local_and_arg_tracker)
+        }
         Expression::GlobalFunctionDeclaration {
             name,
             function_expr,
         } => compile_global_function_declaration(name, function_expr, code, constants),
-        Expression::Define { name: _, value: _ } => {
-            todo!()
-        }
         Expression::FunctionLiteral(function_expr) => {
             compile_function(None, function_expr);
         }
+        Expression::LocalDefine { name, value } => {
+            compile_local_definition(local_and_arg_tracker, name, value, code, constants)
+        }
+    }
+}
+
+fn compile_local_definition(
+    local_and_arg_tracker: &mut Vec<String>,
+    name: String,
+    value: Box<Expression>,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+) {
+    let legal = local_and_arg_tracker.iter().all(|x| x != &name);
+    if !legal {
+        panic!("redefining local variable")
+    };
+    local_and_arg_tracker.push(name.clone());
+    // not -1 because local_and_arg_tracker is kinda 1-indexed,
+    // 0 is reserved for the function object
+    compile_expression(*value, code, constants, local_and_arg_tracker);
+    code.push(Op::Define.into());
+    code.push(local_and_arg_tracker.len() as u8);
+}
+
+fn compile_symbol_as_reference(
+    local_and_argument_tracker: &mut Vec<String>,
+    sym: String,
+    code: &mut Vec<u8>,
+    constants: &mut Vec<ConstantValue>,
+) {
+    // evaulate as reference as opposed to value
+    // local / function argument
+    let local_idx = local_and_argument_tracker.iter().position(|x| x == &sym);
+    if let Some(idx) = local_idx {
+        code.push(Op::ReferenceLocal.into());
+        code.push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
+    } else {
+        // fall back to global
+        code.push(Op::ReferenceGlobal.into());
+        // this can be optimized by reusing the same constant for the same symbol
+        // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
+        constants.push(ConstantValue::Object(ConstantObject::String(sym)));
+        code.push(constants.len() as u8 - 1);
     }
 }
 
@@ -139,7 +184,7 @@ fn compile_regular_form(
     exprs: Vec<Expression>,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
-    locals: &mut Vec<String>,
+    local_and_arg_tracker: &mut Vec<String>,
 ) {
     // We don't know the arity of the function at compile-time so we
     // defensively put the number of arguments to check at runtime
@@ -151,7 +196,7 @@ fn compile_regular_form(
         arity as u8
     };
     for expr in exprs {
-        compile_expression(expr, code, constants, locals);
+        compile_expression(expr, code, constants, local_and_arg_tracker);
     }
     code.push(Op::FuncCall.into());
     code.push(arity);
@@ -161,10 +206,10 @@ fn compile_global_declaration(
     value: Box<Expression>,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
-    locals: &mut Vec<String>,
+    local_and_arg_tracker: &mut Vec<String>,
     name: String,
 ) {
-    compile_expression(*value, code, constants, locals);
+    compile_expression(*value, code, constants, local_and_arg_tracker);
     code.push(Op::DeclareGlobal.into());
     constants.push(ConstantValue::Object(ConstantObject::String(name)));
     code.push(constants.len() as u8 - 1);
@@ -174,19 +219,19 @@ fn compile_if_statement(
     condition: Box<Expression>,
     code: &mut Vec<u8>,
     constants: &mut Vec<ConstantValue>,
-    locals: &mut Vec<String>,
+    local_and_arg_tracker: &mut Vec<String>,
     else_: Box<Expression>,
     then: Box<Expression>,
 ) {
     // IF
-    compile_expression(*condition, code, constants, locals);
+    compile_expression(*condition, code, constants, local_and_arg_tracker);
     // skip to "then"
     code.push(Op::CondJump.into());
     code.push(0x00);
     // will mutate this later
     let then_jump_idx = code.len() - 1;
     // ELSE
-    compile_expression(*else_, code, constants, locals);
+    compile_expression(*else_, code, constants, local_and_arg_tracker);
     // skip to end
     code.push(Op::Jump.into());
     // code[to_then_jump_address as usize] = code.len() as u8;
@@ -196,7 +241,7 @@ fn compile_if_statement(
     // THEN
     let then_jump = (code.len() - then_jump_idx) as u8;
     code[then_jump_idx] = then_jump;
-    compile_expression(*then, code, constants, locals);
+    compile_expression(*then, code, constants, local_and_arg_tracker);
     // FINISH
     let finish_jump = (code.len() - finish_jump_idx) as u8;
     code[finish_jump_idx] = finish_jump
@@ -262,17 +307,20 @@ fn compile_self_evaluation(
 fn compile_function(name: Option<String>, function_expr: FunctionExpression) -> Function {
     let mut code = vec![];
     let mut constants = vec![];
-    let mut locals = function_expr.parameters.clone();
+    let mut local_and_arg_tracker = function_expr.parameters.clone();
+    let arity = function_expr.parameters.len();
 
     for expr in function_expr.body {
-        compile_expression(expr, &mut code, &mut constants, &mut locals);
+        compile_expression(expr, &mut code, &mut constants, &mut local_and_arg_tracker);
     }
 
     code.push(Op::Return.into());
+    let num_locals = local_and_arg_tracker.len() - arity;
 
     Function::new(
         name.unwrap_or("anonymous".to_string()),
-        function_expr.parameters.len(),
+        arity,
+        num_locals as usize,
         BytecodeChunk::new(code, constants),
     )
 }
@@ -282,7 +330,7 @@ fn compile_ast(ast: Ast) -> BytecodeChunk {
     let expressions = ast
         .expressions
         .iter()
-        .map(structure_sexpr)
+        .map(|s| structure_sexpr(s, false)) // top-level isn't in a function
         .collect::<Vec<Expression>>();
 
     // println!("{:#?}", expressions);
@@ -293,9 +341,14 @@ fn compile_ast(ast: Ast) -> BytecodeChunk {
 fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
     let mut code: Vec<u8> = vec![];
     let mut constants: Vec<ConstantValue> = vec![];
-    let mut locals: Vec<String> = vec![];
+    let mut local_and_arg_tracker: Vec<String> = vec![];
     for expression in expressions {
-        compile_expression(expression, &mut code, &mut constants, &mut locals);
+        compile_expression(
+            expression,
+            &mut code,
+            &mut constants,
+            &mut local_and_arg_tracker,
+        );
     }
     code.push(Op::DebugEnd.into());
     BytecodeChunk::new(code, constants)

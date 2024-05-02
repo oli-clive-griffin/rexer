@@ -2,10 +2,10 @@ use crate::builtins::BuiltIn;
 
 #[derive(Debug, PartialEq, Clone)]
 /// Previously known as `Sexpr`
-pub enum EvauluatorRuntimeValue {
-    List(Vec<EvauluatorRuntimeValue>),
-    Quote(Box<EvauluatorRuntimeValue>),
-    QuasiQuotedList(Vec<EvauluatorRuntimeValue>),
+pub enum Sexpr {
+    List(Vec<Sexpr>),
+    Quote(Box<Sexpr>),
+    QuasiQuotedList(Vec<Sexpr>),
     Symbol(String),
     String(String),
     Bool(bool),
@@ -13,14 +13,14 @@ pub enum EvauluatorRuntimeValue {
     Float(f64),
     Function {
         parameters: Vec<String>,
-        body: Vec<EvauluatorRuntimeValue>,
+        body: Vec<Sexpr>,
     },
     Macro {
         parameters: Vec<String>,
-        body: Box<EvauluatorRuntimeValue>,
+        body: Box<Sexpr>,
     },
     BuiltIn(BuiltIn),
-    CommaUnquote(Box<EvauluatorRuntimeValue>),
+    CommaUnquote(Box<Sexpr>),
     Nil,
 }
 
@@ -37,15 +37,15 @@ pub enum SrcSexpr {
 }
 
 impl SrcSexpr {
-    pub fn to_sexpr(&self) -> EvauluatorRuntimeValue {
+    pub fn to_sexpr(&self) -> Sexpr {
         match self {
-            SrcSexpr::List(sexprs) => EvauluatorRuntimeValue::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
-            SrcSexpr::Symbol(s) => EvauluatorRuntimeValue::Symbol(s.clone()),
-            SrcSexpr::String(s) => EvauluatorRuntimeValue::String(s.clone()),
-            SrcSexpr::Bool(b) => EvauluatorRuntimeValue::Bool(*b),
-            SrcSexpr::Int(i) => EvauluatorRuntimeValue::Int(*i),
-            SrcSexpr::Float(f) => EvauluatorRuntimeValue::Float(*f),
-            SrcSexpr::Quote(sexpr) => EvauluatorRuntimeValue::Quote(Box::new(sexpr.to_sexpr())),
+            SrcSexpr::List(sexprs) => Sexpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
+            SrcSexpr::Symbol(s) => Sexpr::Symbol(s.clone()),
+            SrcSexpr::String(s) => Sexpr::String(s.clone()),
+            SrcSexpr::Bool(b) => Sexpr::Bool(*b),
+            SrcSexpr::Int(i) => Sexpr::Int(*i),
+            SrcSexpr::Float(f) => Sexpr::Float(*f),
+            SrcSexpr::Quote(sexpr) => Sexpr::Quote(Box::new(sexpr.to_sexpr())),
         }
     }
 }

@@ -69,7 +69,7 @@ pub fn parse_sexpr(rest_tokens: &[Token]) -> Result<(SrcSexpr, usize), String> {
                     op.1 + 1,                        // skip the apostrophe
                 )
             })
-        } // match next_token {
+        }
           //     Token::Parenthesis(LR::Left) => {
           //         let (sexprs, i_diff) = parse_list(&rest_tokens[2..])?;
           //         let list = SrcSexpr::Quote(Box::new(SrcSexpr::List(sexprs)));

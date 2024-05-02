@@ -73,11 +73,15 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         Some(self.stack[idx as usize])
     }
 
-
     pub fn at(&self, idx: usize) -> Option<&T> {
-        if idx > self.ptr as usize {
-            return None;
-        }
-        Some(&self.stack[idx])
+        self.stack.get(idx)
+    }
+
+    pub fn at_mut(&mut self, idx: usize) -> Option<&mut T> {
+        self.stack.get_mut(idx)
+    }
+
+    pub fn size(&self) -> usize {
+        (self.ptr + 1) as usize
     }
 }

@@ -1,20 +1,20 @@
-use crate::sexpr::EvauluatorRuntimeValue;
+use crate::sexpr::Sexpr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltIn {
     pub symbol: &'static str,
-    eval: fn(&[EvauluatorRuntimeValue]) -> Result<EvauluatorRuntimeValue, String>,
+    eval: fn(&[Sexpr]) -> Result<Sexpr, String>,
 }
 
 impl BuiltIn {
-    pub fn eval(&self, args: &[EvauluatorRuntimeValue]) -> Result<EvauluatorRuntimeValue, String> {
+    pub fn eval(&self, args: &[Sexpr]) -> Result<Sexpr, String> {
         (self.eval)(args)
     }
 }
 
 const LIST: BuiltIn = BuiltIn {
     symbol: "list",
-    eval: |args| Ok(EvauluatorRuntimeValue::List(args.to_vec())),
+    eval: |args| Ok(Sexpr::List(args.to_vec())),
 };
 
 const CONS: BuiltIn = BuiltIn {
@@ -24,10 +24,10 @@ const CONS: BuiltIn = BuiltIn {
             return Err("cons must be called with two arguments".to_string());
         }
         match &args[1] {
-            EvauluatorRuntimeValue::List(list) => {
+            Sexpr::List(list) => {
                 let mut new = list.clone();
                 new.insert(0, args[0].clone());
-                Ok(EvauluatorRuntimeValue::List(new))
+                Ok(Sexpr::List(new))
             }
             a => Err(format! {
                 "cons must be called with a list as the second argument, got {:#?}",
@@ -44,7 +44,7 @@ const CAR: BuiltIn = BuiltIn {
             return Err("car must be called with one argument".to_string());
         }
         match &args[0] {
-            EvauluatorRuntimeValue::List(list) => Ok(list[0].clone()),
+            Sexpr::List(list) => Ok(list[0].clone()),
             _ => Err("car must be called with a list as the first argument".to_string()),
         }
     },
@@ -60,10 +60,10 @@ const CDR: BuiltIn = BuiltIn {
             ));
         }
         match &args[0] {
-            EvauluatorRuntimeValue::List(list) => {
+            Sexpr::List(list) => {
                 let mut new = list.clone();
                 new.remove(0);
-                Ok(EvauluatorRuntimeValue::List(new))
+                Ok(Sexpr::List(new))
             }
             _ => Err("cdr must be called with a list as the first argument".to_string()),
         }
@@ -76,12 +76,12 @@ const ADD: BuiltIn = BuiltIn {
         let mut out = 0;
         for arg in args {
             match arg {
-                EvauluatorRuntimeValue::Int(i) => out += i,
+                Sexpr::Int(i) => out += i,
                 // Sexpr::Float(i) => out += i as f64,
                 _ => return Err("add must be called with a list of integers".to_string()),
             }
         }
-        Ok(EvauluatorRuntimeValue::Int(out))
+        Ok(Sexpr::Int(out))
     },
 };
 
@@ -89,18 +89,18 @@ const SUB: BuiltIn = BuiltIn {
     symbol: "-",
     eval: |args| {
         let mut init = match args[0] {
-            EvauluatorRuntimeValue::Int(i) => i,
+            Sexpr::Int(i) => i,
             // Sexpr::Float(i) => i as f64,
             _ => return Err("sub must be called with a list of integers".to_string()),
         };
         for arg in &args[1..] {
             match arg {
-                EvauluatorRuntimeValue::Int(j) => init -= j,
+                Sexpr::Int(j) => init -= j,
                 // Sexpr::Float(j) => init -= j as f64,
                 _ => return Err("sub must be called with a list of integers".to_string()),
             }
         }
-        Ok(EvauluatorRuntimeValue::Int(init))
+        Ok(Sexpr::Int(init))
     },
 };
 
@@ -110,12 +110,12 @@ const MUL: BuiltIn = BuiltIn {
         let mut out = 1;
         for arg in args {
             match arg {
-                EvauluatorRuntimeValue::Int(i) => out *= i,
+                Sexpr::Int(i) => out *= i,
                 // Sexpr::Float(i) => out *= i as f64,
                 _ => return Err("mul must be called with a list of integers".to_string()),
             }
         }
-        Ok(EvauluatorRuntimeValue::Int(out))
+        Ok(Sexpr::Int(out))
     },
 };
 
@@ -123,18 +123,18 @@ const DIV: BuiltIn = BuiltIn {
     symbol: "/",
     eval: |args| {
         let mut init = match args[0] {
-            EvauluatorRuntimeValue::Int(i) => i,
+            Sexpr::Int(i) => i,
             // Sexpr::Float(i) => i as f64,
             _ => return Err("div must be called with a list of integers".to_string()),
         };
         for arg in &args[1..] {
             match arg {
-                EvauluatorRuntimeValue::Int(j) => init /= j,
+                Sexpr::Int(j) => init /= j,
                 // Sexpr::Float(j) => init /= j as f64,
                 _ => return Err("div must be called with a list of integers".to_string()),
             }
         }
-        Ok(EvauluatorRuntimeValue::Int(init))
+        Ok(Sexpr::Int(init))
     },
 };
 
@@ -145,7 +145,7 @@ const EMPTY: BuiltIn = BuiltIn {
             return Err("empty must be called with one argument".to_string());
         }
         match &args[0] {
-            EvauluatorRuntimeValue::List(list) => Ok(EvauluatorRuntimeValue::Bool(list.is_empty())),
+            Sexpr::List(list) => Ok(Sexpr::Bool(list.is_empty())),
             _ => Err("empty must be called with a list as the first argument".to_string()),
         }
     },
@@ -158,7 +158,7 @@ const INC: BuiltIn = BuiltIn {
             return Err("inc must be called with one argument".to_string());
         }
         match &args[0] {
-            EvauluatorRuntimeValue::Int(i) => Ok(EvauluatorRuntimeValue::Int(i + 1)),
+            Sexpr::Int(i) => Ok(Sexpr::Int(i + 1)),
             // Sexpr::Float(i) => Sexpr::Float(i + 1.0),
             _ => Err("inc must be called with an integer".to_string()),
         }
@@ -171,7 +171,7 @@ const PRINT: BuiltIn = BuiltIn {
         for arg in args {
             println!("{}", arg);
         }
-        Ok(EvauluatorRuntimeValue::Bool(true)) // TODO introduce a new type for void / unit
+        Ok(Sexpr::Nil)
     },
 };
 
@@ -182,7 +182,7 @@ const EQ: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (EvauluatorRuntimeValue::Int(i), EvauluatorRuntimeValue::Int(j)) => Ok(EvauluatorRuntimeValue::Bool(i == j)),
+            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i == j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
@@ -196,7 +196,7 @@ const GT: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (EvauluatorRuntimeValue::Int(i), EvauluatorRuntimeValue::Int(j)) => Ok(EvauluatorRuntimeValue::Bool(i > j)),
+            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i > j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
@@ -210,7 +210,7 @@ const LT: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (EvauluatorRuntimeValue::Int(i), EvauluatorRuntimeValue::Int(j)) => Ok(EvauluatorRuntimeValue::Bool(i < j)),
+            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i < j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
@@ -228,12 +228,12 @@ mod tests {
     #[test]
     fn test_cons() -> Result<(), String> {
         let args = vec![
-            EvauluatorRuntimeValue::Int(1),
-            EvauluatorRuntimeValue::List(vec![EvauluatorRuntimeValue::Int(2), EvauluatorRuntimeValue::Int(3)]),
+            Sexpr::Int(1),
+            Sexpr::List(vec![Sexpr::Int(2), Sexpr::Int(3)]),
         ];
         assert_eq!(
             CONS.eval(&args)?,
-            EvauluatorRuntimeValue::List(vec![EvauluatorRuntimeValue::Int(1), EvauluatorRuntimeValue::Int(2), EvauluatorRuntimeValue::Int(3),])
+            Sexpr::List(vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3),])
         );
         Ok(())
     }

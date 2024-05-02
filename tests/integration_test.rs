@@ -60,6 +60,10 @@ fn target_spec_1() {
     run_code("(print '\"asdf\")");
 }
 
+#[test]
+fn target_spec_asdf() {
+    run_code("(print '(1 '2))");
+}
 
 #[test]
 fn target_spec_2() {
@@ -94,6 +98,54 @@ fn target_spec_7() {
 #[test]
 fn target_spec_8() {
     run_code("(print '\"a\")");
+}
+
+#[test]
+fn target_spec_9() {
+    run_code("(print (quote a))");
+}
+
+#[test]
+fn target_spec_10() {
+    run_code(r#"
+(defun (f)
+    (define z 10)
+    (define y 10)
+    (define x 10)
+    (defun (g b)
+        (+ b 1))
+    g)
+(print ((f) 8))
+"#
+    );
+}
+
+#[test]
+fn target_spec_11() {
+    run_code(r#"
+(defun (f)
+    (defun (g)
+        (defun (h) "asdf")
+        h)
+    g)
+
+(print (((f)) 8))
+"#
+    );
+}
+
+#[test]
+fn target_spec_12() {
+    run_code(
+        r#"
+(defun (foo arg1)
+    (define local "baz")
+    (print local)
+    (print arg1))
+
+(foo "bar")
+"#,
+    );
 }
 
 #[test]

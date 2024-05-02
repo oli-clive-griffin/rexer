@@ -27,6 +27,17 @@ pub enum ObjectValue {
     Symbol(String),
     ConsCell(ConsCell),
 }
+impl ObjectValue {
+    fn truthy(&self) -> bool {
+        match self {
+            ObjectValue::SmallValue(v) => v.truthy(),
+            ObjectValue::String(_) => true,
+            ObjectValue::Function(_) => true,
+            ObjectValue::Symbol(_) => true,
+            ObjectValue::ConsCell(_) => true, // '() is literally `nil`
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsCell(SmallVal, *mut ConsCell);
@@ -82,6 +93,7 @@ pub struct Function {
     name: String,
     arity: usize,
     bytecode: Box<BytecodeChunk>,
+    num_locals: usize,
 }
 
 impl Debug for Function {
@@ -97,10 +109,11 @@ impl Debug for Function {
 }
 
 impl Function {
-    pub fn new(name: String, arity: usize, bytecode: BytecodeChunk) -> Self {
+    pub fn new(name: String, arity: usize, num_locals: usize, bytecode: BytecodeChunk) -> Self {
         Function {
             name,
             arity,
+            num_locals: num_locals,
             bytecode: Box::new(bytecode),
         }
     }
@@ -154,6 +167,7 @@ struct CallFrame {
     stack_frame_start: usize,
     arity: usize,
     constants: Vec<ConstantValue>,
+    num_locals: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,7 +184,6 @@ pub enum ConstantObject {
     String(String),
     Function(Function),
     Symbol(String),
-    Quote(Box<ConstantValue>), // TODO remove *const i think
 }
 
 impl ConstantObject {
@@ -179,7 +192,6 @@ impl ConstantObject {
             ConstantObject::String(s) => ObjectValue::String(s.clone()),
             ConstantObject::Function(func) => ObjectValue::Function(func.clone()),
             ConstantObject::Symbol(s) => ObjectValue::Symbol(s.clone()),
-            ConstantObject::Quote(_) => todo!("this doesn't even make sense!"),
         }
     }
 }
@@ -191,7 +203,6 @@ impl Display for ConstantObject {
             ConstantObject::String(s) => write!(f, "\"{}\"", s),
             ConstantObject::Function(func) => write!(f, "function <{}>", func.name),
             ConstantObject::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
-            ConstantObject::Quote(c) => write!(f, "'{}", *c),
         }
     }
 }
@@ -199,12 +210,10 @@ impl Display for ConstantObject {
 impl SmallVal {
     fn truthy(&self) -> bool {
         match self {
-            SmallVal::Integer(i) => *i != 0,
-            SmallVal::Float(f) => *f != 0.0,
-            SmallVal::Bool(b) => *b,
+            SmallVal::Integer(_) | SmallVal::Float(_) | SmallVal::Quote(_) => true,
             SmallVal::Nil => false,
-            SmallVal::ObjectPtr(_) => false,
-            SmallVal::Quote(_) => todo!(),
+            SmallVal::Bool(b) => *b,
+            SmallVal::ObjectPtr(ptr) => unsafe { (**ptr).value.truthy() },
         }
     }
 
@@ -251,7 +260,8 @@ pub enum Op {
     Cons = 17, // really not sure this should be an opcode
     Print = 18,
     Quote = 19,
-    DebugEnd = 254, // ends the program
+    Define = 20,
+    DebugEnd = 254,
 }
 
 impl Default for VM {
@@ -262,6 +272,7 @@ impl Default for VM {
 
 fn binary_function(name: &'static str, op: Op) -> Function {
     Function {
+        num_locals: 0,
         name: name.to_string(),
         arity: 2,
         bytecode: Box::new(BytecodeChunk {
@@ -289,6 +300,7 @@ fn builtins() -> Vec<Function> {
         binary_function(">=", Op::GTE),
         binary_function("<=", Op::LTE),
         Function {
+            num_locals: 0,
             name: "print".to_string(),
             arity: 1,
             bytecode: Box::new(BytecodeChunk {
@@ -348,18 +360,21 @@ impl VM {
                 Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
-                Op::Quote => {
-                    let val = self.stack.pop().unwrap();
-                    let addr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
-                    self.stack.push(SmallVal::Quote(addr));
-                    self.advance();
-                }
+                Op::Quote => self.handle_quote(),
+                Op::Define => self.handle_local_define(),
                 Op::DebugEnd => return,
             }
         }
     }
 
     // the following are all in the wrong order oh well
+
+    fn handle_quote(&mut self) {
+        let val = self.stack.pop().unwrap();
+        let addr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
+        self.stack.push(SmallVal::Quote(addr));
+        self.advance();
+    }
 
     fn handle_cons(&mut self) {
         let car = self.stack.pop().unwrap();
@@ -406,15 +421,23 @@ impl VM {
     }
 
     fn handle_reference_local(&mut self) {
+        let offset = self.consume_next_byte_as_byte();
+        let value = *self.local_var_mut(offset); // copy
+        self.stack.push(value);
+        self.advance();
+    }
+
+    /// includes arguments
+    /// [function, arg1, arg2, ... argN, local1, ...]
+    fn local_var_mut(&mut self, n: u8) -> &mut SmallVal {
         let current_callframe = self
             .callframes
             .last()
             .expect("expected a call frame for a local variable");
-        let stack_frame_start = current_callframe.stack_frame_start;
-        let offset = self.consume_next_byte_as_byte() as usize;
-        let value = *self.stack.at(stack_frame_start + offset).unwrap();
-        self.stack.push(value);
-        self.advance();
+
+        let global_offset = current_callframe.stack_frame_start + n as usize;
+
+        self.stack.at_mut(global_offset).unwrap()
     }
 
     fn handle_func_call(&mut self) {
@@ -422,13 +445,18 @@ impl VM {
         // [..., function, arg1, arg2, ... argN]
         // and the operand to be the arity of the function, so we can lookup the function and args
         let given_arity = self.consume_next_byte_as_byte();
+        // let callframe = self.callframes.last().unwrap();
 
-        let func_obj = match self.stack.peek_back(given_arity as usize).unwrap() {
+        let func_obj = match self
+            .stack
+            .peek_back(given_arity as usize /* + callframe.num_locals*/)
+            .unwrap()
+        {
             SmallVal::ObjectPtr(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(f) => f,
                 _ => panic!("expected ObjectValue::Function"),
             },
-            _ => panic!("expected StackValue::Object"),
+            got => panic!("expected StackValue::Object, got {:?}", got),
         };
 
         if func_obj.arity != given_arity as usize {
@@ -442,22 +470,27 @@ impl VM {
         }
 
         self.callframes.push(self.make_callframe(func_obj));
+
+        // set to the start of the function
         self.ip = func_obj.bytecode.code.as_ptr();
+
+        // allocate space for the locals so they don't get overwritten
+        self.stack.ptr += func_obj.num_locals as i32;
     }
 
     fn make_callframe(&self, func_obj: &Function) -> CallFrame {
         CallFrame {
             return_address: self.ip,
             stack_frame_start: {
-                let ptr = self.stack.ptr - func_obj.arity as i32; // todo CHECK
+                let ptr = self.stack.ptr - func_obj.arity as i32; // because the arugments are at the end of the stack
                 if ptr < 0 {
                     panic!();
-                } else {
-                    ptr as usize
                 }
+                ptr as usize
             },
             arity: func_obj.arity,
             constants: func_obj.bytecode.constants.clone(),
+            num_locals: func_obj.num_locals,
         }
     }
 
@@ -500,6 +533,13 @@ impl VM {
             },
             _ => panic!("expected string"),
         }
+        self.advance();
+    }
+
+    fn handle_local_define(&mut self) {
+        let value = self.stack.pop().unwrap();
+        let local_idx = self.consume_next_byte_as_byte();
+        *self.local_var_mut(local_idx) = value;
         self.advance();
     }
 
@@ -602,19 +642,7 @@ impl VM {
             (SmallVal::Float(a), SmallVal::Float(b)) => SmallVal::Float(a + b),
             (SmallVal::Integer(a), SmallVal::Float(b)) => SmallVal::Float(a as f64 + b),
             (SmallVal::Float(a), SmallVal::Integer(b)) => SmallVal::Float(a + b as f64),
-            (SmallVal::ObjectPtr(a), SmallVal::ObjectPtr(b)) => {
-                match (&unsafe { &*a }.value, &unsafe { &*b }.value) {
-                    (ObjectValue::String(a), ObjectValue::String(b)) => {
-                        let obj_ptr = unsafe {
-                            let obj_value = ObjectValue::String(a.clone() + b);
-                            self.allocate_value(obj_value)
-                        };
-                        SmallVal::ObjectPtr(obj_ptr)
-                    }
-                    _ => todo!(),
-                }
-            }
-            _ => panic!("expected integer, float, or string object"), // todo probably remove string + support
+            _ => panic!("expected integer or float"),
         };
         self.stack.push(result);
         self.advance();
@@ -770,6 +798,8 @@ mod tests {
     #[test]
     fn test_cond_not() {
         let chunk = BytecodeChunk {
+            // (if 0 2 3)
+            // 0 is truthy
             code: vec![
                 Op::Constant.into(),
                 0,
@@ -793,7 +823,7 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(3)]));
+        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(2)]));
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 
@@ -824,92 +854,6 @@ mod tests {
     }
 
     #[test]
-    fn test_string_concat() {
-        let chunk = BytecodeChunk {
-            code: vec![
-                Op::Constant.into(),
-                0,
-                Op::Constant.into(),
-                1,
-                Op::Add.into(),
-                Op::DebugEnd.into(),
-            ],
-            constants: vec![
-                ConstantValue::Object(ConstantObject::String("foo".to_string())),
-                ConstantValue::Object(ConstantObject::String("bar".to_string())),
-            ],
-        };
-        let ptr = chunk.code.as_ptr();
-
-        let mut vm = VM::default();
-        vm.run(chunk);
-        assert_eq!(vm.stack.len(), 1);
-
-        let string = match vm.stack.peek_top().unwrap() {
-            SmallVal::ObjectPtr(ptr) => match &unsafe { &**ptr }.value {
-                ObjectValue::String(str) => str,
-                _ => panic!(),
-            },
-            _ => panic!(),
-        };
-
-        assert_eq!(string, "foobar");
-        assert_eq!(vm.ip, unsafe { ptr.add(5) });
-    }
-
-    #[test]
-    fn test_var_declare() {
-        let chunk = BytecodeChunk {
-            code: vec![
-                Op::Constant.into(),
-                0,
-                Op::DeclareGlobal.into(),
-                1,
-                Op::DebugEnd.into(),
-            ],
-            constants: vec![
-                ConstantValue::Integer(5),                                        // value
-                ConstantValue::Object(ConstantObject::String("foo".to_string())), // name
-            ],
-        };
-        let ptr = chunk.code.as_ptr();
-
-        let mut vm = VM::default();
-        let num_globals_before = vm.globals.len();
-        vm.run(chunk);
-        assert_eq!(vm.stack.len(), 0);
-        assert_eq!(vm.globals.len(), num_globals_before + 1);
-        assert_eq!(vm.globals.get("foo").unwrap(), &SmallVal::Integer(5));
-        assert_eq!(vm.ip, unsafe { ptr.add(4) });
-    }
-
-    #[test]
-    fn test_var_reference() {
-        let chunk = BytecodeChunk {
-            code: vec![
-                Op::Constant.into(),
-                0,
-                Op::DeclareGlobal.into(),
-                1,
-                Op::ReferenceGlobal.into(),
-                1,
-                Op::DebugEnd.into(),
-            ],
-            constants: vec![
-                ConstantValue::Integer(5),                                        // value
-                ConstantValue::Object(ConstantObject::String("foo".to_string())), // name
-            ],
-        };
-        let ptr = chunk.code.as_ptr();
-
-        let mut vm = VM::default();
-        vm.run(chunk);
-        assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(5));
-        assert_eq!(vm.ip, unsafe { ptr.add(6) });
-    }
-
-    #[test]
     fn test_function() {
         let bc = BytecodeChunk {
             code: vec![
@@ -926,6 +870,7 @@ mod tests {
             constants: vec![
                 ConstantValue::Object(ConstantObject::Function(
                     Function {
+                        num_locals: 0,
                         name: "asdf".to_string(),
                         arity: 2,
                         bytecode: Box::new(BytecodeChunk {
@@ -970,6 +915,7 @@ mod tests {
             constants: vec![
                 ConstantValue::Object(ConstantObject::Function(
                     Function {
+                        num_locals: 0,
                         name: "asdf".to_string(),
                         arity: 2,
                         bytecode: Box::new(BytecodeChunk {
