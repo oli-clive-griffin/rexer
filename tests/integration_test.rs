@@ -1,4 +1,4 @@
-use rusp::compiler::compile;
+use rusp::compiler::ChunkCompiler;
 use rusp::vm::VM;
 
 #[test]
@@ -13,8 +13,7 @@ fn actually_e2e() {
 "#
     .to_owned();
 
-    let bc = compile(&src);
-
+    let bc = ChunkCompiler::new().compile(&src);
     let mut vm = VM::default();
     vm.run(bc);
 }
@@ -32,7 +31,7 @@ fn actually_e2e_2() {
 "#
     .to_owned();
 
-    let bc = compile(&src);
+    let bc = ChunkCompiler::new().compile(&src);
 
     let fib = |n: i64| -> i64 {
         let mut a = 0;
@@ -51,13 +50,13 @@ fn actually_e2e_2() {
 }
 
 fn run_code(src: &str) {
-    let bc = compile(&src.to_string());
+    let bc = ChunkCompiler::new().compile(&src.to_string());
     VM::default().run(bc);
 }
 
 #[test]
 fn target_spec_1() {
-    run_code("(print '\"asdf\")");
+    run_code("(print \"asdf\")");
 }
 
 #[test]
@@ -107,30 +106,59 @@ fn target_spec_9() {
 
 #[test]
 fn target_spec_10() {
-    run_code(r#"
+    run_code(
+        r#"
 (defun (f)
-    (define z 10)
-    (define y 10)
-    (define x 10)
+    (define red-herring 10)
     (defun (g b)
         (+ b 1))
     g)
 (print ((f) 8))
-"#
+"#,
+    );
+}
+
+#[test]
+fn target_spec_101() {
+    run_code(
+        r#"
+(defun (f)
+    (defun (g) "asdf")
+    g)
+(print (f)) ; g
+(print ((f))) ; "asdf"
+"#,
+    );
+}
+
+#[test]
+fn closures_broken() {
+    run_code(
+        r#"
+(defun (f)
+    (define x 10)
+    (defun (g)
+        x)
+    g)
+(define getx (f))
+(print (getx))
+"#,
     );
 }
 
 #[test]
 fn target_spec_11() {
-    run_code(r#"
+    run_code(
+        r#"
 (defun (f)
     (defun (g)
         (defun (h) "asdf")
         h)
     g)
-
-(print (((f)) 8))
-"#
+(print (f)) ; g
+(print ((f))) ; h
+(print (((f)))) ; "asdf"
+"#,
     );
 }
 
@@ -225,7 +253,7 @@ fn target_spec() {
 "#
     .to_owned();
 
-    let bc = compile(&src);
+    let bc = ChunkCompiler::new().compile(&src);
 
     let fib = |n: i64| -> i64 {
         let mut a = 0;

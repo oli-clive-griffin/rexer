@@ -34,12 +34,6 @@ pub enum Expression {
         value: Box<Expression>,
     },
 
-    /// (defun (name args) ..body)
-    GlobalFunctionDeclaration {
-        name: String,
-        function_expr: FunctionExpression,
-    },
-
     /// An anonymous function
     /// (fn (args) ..body)
     FunctionLiteral(FunctionExpression),
@@ -52,320 +46,287 @@ pub enum Expression {
 pub struct FunctionExpression {
     parameters: Vec<String>,
     body: Vec<Expression>,
+    name: Option<String>,
 }
 
 impl FunctionExpression {
-    pub fn new(parameters: Vec<String>, body: Vec<Expression>) -> Self {
-        Self { parameters, body }
+    pub fn new(parameters: Vec<String>, body: Vec<Expression>, name: Option<String>) -> Self {
+        Self {
+            parameters,
+            body,
+            name,
+        }
     }
 }
 
-struct ChunkCompiler {
+pub struct ChunkCompiler<'a> {
+    code: Vec<u8>,
     constants: Vec<ConstantValue>,
     local_and_arg_tracker: Vec<String>,
-    parent: Option<Box<ChunkCompiler>>,
+    parent: Option<Box<&'a ChunkCompiler<'a>>>,
 }
 
-fn compile_expression(
-    expression: Expression,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    local_and_arg_tracker: &mut Vec<String>,
-) {
-    match expression {
-        Expression::SrcSexpr(sexpr) => match sexpr {
-            SrcSexpr::Symbol(sym) => {
-                compile_symbol_as_reference(local_and_arg_tracker, sym, code, constants);
+impl<'a> ChunkCompiler<'a> {
+    fn compile_expression(self: &mut Self, expression: Expression) {
+        match expression {
+            Expression::SrcSexpr(sexpr) => match sexpr {
+                SrcSexpr::Symbol(sym) => {
+                    self.compile_symbol_as_reference(sym);
+                }
+                SrcSexpr::Bool(_) | SrcSexpr::Int(_) | SrcSexpr::Float(_) | SrcSexpr::String(_) => {
+                    self.compile_self_evaluation(sexpr, 0)
+                }
+                SrcSexpr::Quote(_) => self.compile_self_evaluation(sexpr, 1),
+                SrcSexpr::List(_) => {
+                    unreachable!("this should have been handled by the structural parser")
+                }
+            },
+            Expression::If {
+                condition,
+                then,
+                else_,
+            } => self.compile_if_statement(condition, else_, then),
+            Expression::RegularForm(exprs) => self.compile_regular_form(exprs),
+            Expression::FunctionLiteral(function_expr) => {
+                let f = ChunkCompiler::with_parent(self).compile_function(function_expr);
+
+                self.code.push(Op::Constant.into());
+                self.constants
+                    .push(ConstantValue::Object(ConstantObject::Function(f)));
+                self.code.push(self.constants.len() as u8 - 1);
             }
-            SrcSexpr::Bool(_) | SrcSexpr::Int(_) | SrcSexpr::Float(_) | SrcSexpr::String(_) => {
-                compile_self_evaluation(sexpr, code, constants, 0)
+            Expression::DeclareGlobal { name, value } => {
+                self.compile_global_declaration(name, value)
             }
-            SrcSexpr::Quote(_) => compile_self_evaluation(sexpr, code, constants, 1),
-            SrcSexpr::List(_) => {
-                unreachable!("this should have been handled by the structural parser")
-            }
-        },
-        Expression::If {
-            condition,
-            then,
-            else_,
-        } => compile_if_statement(
-            condition,
-            code,
-            constants,
-            local_and_arg_tracker,
-            else_,
-            then,
-        ),
-        Expression::DeclareGlobal { name, value } => {
-            compile_global_declaration(value, code, constants, local_and_arg_tracker, name)
-        }
-        Expression::RegularForm(exprs) => {
-            compile_regular_form(exprs, code, constants, local_and_arg_tracker)
-        }
-        Expression::GlobalFunctionDeclaration {
-            name,
-            function_expr,
-        } => compile_global_function_declaration(name, function_expr, code, constants),
-        Expression::FunctionLiteral(function_expr) => {
-            compile_function(None, function_expr);
-        }
-        Expression::LocalDefine { name, value } => {
-            compile_local_definition(local_and_arg_tracker, name, value, code, constants)
+            Expression::LocalDefine { name, value } => self.compile_local_definition(name, value),
         }
     }
-}
 
-fn compile_local_definition(
-    local_and_arg_tracker: &mut Vec<String>,
-    name: String,
-    value: Box<Expression>,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-) {
-    let legal = local_and_arg_tracker.iter().all(|x| x != &name);
-    if !legal {
-        panic!("redefining local variable")
-    };
-    local_and_arg_tracker.push(name.clone());
-    // not -1 because local_and_arg_tracker is kinda 1-indexed,
-    // 0 is reserved for the function object
-    compile_expression(*value, code, constants, local_and_arg_tracker);
-    code.push(Op::Define.into());
-    code.push(local_and_arg_tracker.len() as u8);
-}
-
-fn compile_symbol_as_reference(
-    local_and_argument_tracker: &mut Vec<String>,
-    sym: String,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-) {
-    // evaulate as reference as opposed to value
-    // local / function argument
-    let local_idx = local_and_argument_tracker.iter().position(|x| x == &sym);
-    if let Some(idx) = local_idx {
-        code.push(Op::ReferenceLocal.into());
-        code.push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
-    } else {
-        // fall back to global
-        code.push(Op::ReferenceGlobal.into());
-        // this can be optimized by reusing the same constant for the same symbol
-        // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
-        constants.push(ConstantValue::Object(ConstantObject::String(sym)));
-        code.push(constants.len() as u8 - 1);
+    fn compile_local_definition(self: &mut Self, name: String, value: Box<Expression>) {
+        let legal = self.local_and_arg_tracker.iter().all(|x| x != &name);
+        if !legal {
+            panic!("redefining local variable")
+        };
+        self.local_and_arg_tracker.push(name.clone());
+        self.compile_expression(*value);
+        self.code.push(Op::Define.into());
+        self.code.push(self.local_and_arg_tracker.len() as u8);
     }
-}
 
-// can this be implemented in terms of global declaration?
-fn compile_global_function_declaration(
-    name: String,
-    function_expr: FunctionExpression,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-) {
-    // potenially jank way of doing it for now:
-    // make function object
-    let function_obj = ConstantValue::Object(ConstantObject::Function(compile_function(
-        Some(name.clone()),
-        function_expr,
-    )));
-    // reference constant function object on stack
-    code.push(Op::Constant.into());
-    constants.push(function_obj);
-    code.push(constants.len() as u8 - 1);
-    // declare top of stack as global
-    code.push(Op::DeclareGlobal.into());
-    constants.push(ConstantValue::Object(ConstantObject::String(name)));
-    code.push(constants.len() as u8 - 1);
-}
+    fn compile_symbol_as_reference(self: &mut Self, sym: String) {
+        // evaulate as reference as opposed to value
+        // local / function argument
+        let local_idx = self.local_and_arg_tracker.iter().position(|x| x == &sym);
+        if let Some(idx) = local_idx {
+            self.code.push(Op::ReferenceLocal.into());
+            self.code.push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
+        } else
+        // if let Some(parent) = &self.parent {
 
-fn compile_regular_form(
-    exprs: Vec<Expression>,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    local_and_arg_tracker: &mut Vec<String>,
-) {
-    // We don't know the arity of the function at compile-time so we
-    // defensively put the number of arguments to check at runtime
-    let arity = {
-        let arity = exprs.len() - 1;
-        if arity > 255 {
-            panic!()
+        // }
+        {
+            // fall back to global
+            self.code.push(Op::ReferenceGlobal.into());
+            // this can be optimized by reusing the same constant for the same symbol
+            // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
+            self.constants
+                .push(ConstantValue::Object(ConstantObject::String(sym)));
+            self.code.push(self.constants.len() as u8 - 1);
         }
-        arity as u8
-    };
-    for expr in exprs {
-        compile_expression(expr, code, constants, local_and_arg_tracker);
     }
-    code.push(Op::FuncCall.into());
-    code.push(arity);
-}
 
-fn compile_global_declaration(
-    value: Box<Expression>,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    local_and_arg_tracker: &mut Vec<String>,
-    name: String,
-) {
-    compile_expression(*value, code, constants, local_and_arg_tracker);
-    code.push(Op::DeclareGlobal.into());
-    constants.push(ConstantValue::Object(ConstantObject::String(name)));
-    code.push(constants.len() as u8 - 1);
-}
-
-fn compile_if_statement(
-    condition: Box<Expression>,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    local_and_arg_tracker: &mut Vec<String>,
-    else_: Box<Expression>,
-    then: Box<Expression>,
-) {
-    // IF
-    compile_expression(*condition, code, constants, local_and_arg_tracker);
-    // skip to "then"
-    code.push(Op::CondJump.into());
-    code.push(0x00);
-    // will mutate this later
-    let then_jump_idx = code.len() - 1;
-    // ELSE
-    compile_expression(*else_, code, constants, local_and_arg_tracker);
-    // skip to end
-    code.push(Op::Jump.into());
-    // code[to_then_jump_address as usize] = code.len() as u8;
-    code.push(0x00);
-    // will mutate this later
-    let finish_jump_idx = code.len() - 1;
-    // THEN
-    let then_jump = (code.len() - then_jump_idx) as u8;
-    code[then_jump_idx] = then_jump;
-    compile_expression(*then, code, constants, local_and_arg_tracker);
-    // FINISH
-    let finish_jump = (code.len() - finish_jump_idx) as u8;
-    code[finish_jump_idx] = finish_jump
-}
-
-fn compile_self_evaluation(
-    sexpr: SrcSexpr,
-    code: &mut Vec<u8>,
-    constants: &mut Vec<ConstantValue>,
-    quote_level: usize,
-) {
-    match sexpr {
-        SrcSexpr::Bool(x) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Boolean(x));
-            code.push(constants.len() as u8 - 1);
-        }
-        SrcSexpr::Int(x) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Integer(x));
-            code.push(constants.len() as u8 - 1);
-        }
-        SrcSexpr::Float(x) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Float(x));
-            code.push(constants.len() as u8 - 1);
-        }
-        SrcSexpr::String(x) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Object(ConstantObject::String(x)));
-            code.push(constants.len() as u8 - 1);
-        }
-        SrcSexpr::Symbol(x) => {
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Object(ConstantObject::Symbol(x)));
-            code.push(constants.len() as u8 - 1);
-        }
-        // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
-        SrcSexpr::List(sexprs) => {
-            // nil for end of list
-            code.push(Op::Constant.into());
-            constants.push(ConstantValue::Nil);
-            code.push(constants.len() as u8 - 1);
-
-            // cons each element in reverse order
-            for sexpr in sexprs.into_iter().rev() {
-                compile_self_evaluation(sexpr, code, constants, quote_level);
-                code.push(Op::Cons.into());
+    fn compile_regular_form(self: &mut Self, exprs: Vec<Expression>) {
+        // We don't know the arity of the function at compile-time so we
+        // defensively put the number of arguments to check at runtime
+        let arity = {
+            let arity = exprs.len() - 1;
+            if arity > 255 {
+                panic!()
             }
+            arity as u8
+        };
+        for expr in exprs {
+            self.compile_expression(expr);
         }
-        SrcSexpr::Quote(quoted_sexpr) => {
-            compile_self_evaluation(*quoted_sexpr, code, constants, quote_level + 1);
-            // this is kinda hacky:
-            // The first level of quoting is handled by the compiler, by compiling, for example, `'x` to the literal symbol `x`
-            // in the case of `''x`, the first quote is handled by the compiler, and the second quote is handled here:
-            if quote_level >= 2 {
-                code.push(Op::Quote.into());
+        self.code.push(Op::FuncCall.into());
+        self.code.push(arity);
+    }
+
+    fn compile_global_declaration(self: &mut Self, name: String, value: Box<Expression>) {
+        self.compile_expression(*value);
+        self.code.push(Op::DeclareGlobal.into());
+        self.constants
+            .push(ConstantValue::Object(ConstantObject::String(name)));
+        self.code.push(self.constants.len() as u8 - 1);
+    }
+
+    fn compile_if_statement(
+        self: &mut Self,
+        condition: Box<Expression>,
+        else_: Box<Expression>,
+        then: Box<Expression>,
+    ) {
+        // IF
+        self.compile_expression(*condition);
+        // skip to "then"
+        self.code.push(Op::CondJump.into());
+        self.code.push(0x00);
+        // will mutate this later
+        let then_jump_idx = self.code.len() - 1;
+        // ELSE
+        self.compile_expression(*else_);
+        // skip to end
+        self.code.push(Op::Jump.into());
+        // self.code[to_then_jump_address as usize] = self.code.len() as u8;
+        self.code.push(0x00);
+        // will mutate this later
+        let finish_jump_idx = self.code.len() - 1;
+        // THEN
+        let then_jump = (self.code.len() - then_jump_idx) as u8;
+        self.code[then_jump_idx] = then_jump;
+        self.compile_expression(*then);
+        // FINISH
+        let finish_jump = (self.code.len() - finish_jump_idx) as u8;
+        self.code[finish_jump_idx] = finish_jump
+    }
+
+    fn compile_self_evaluation(self: &mut Self, sexpr: SrcSexpr, quote_level: usize) {
+        match sexpr {
+            SrcSexpr::Bool(x) => {
+                self.code.push(Op::Constant.into());
+                self.constants.push(ConstantValue::Boolean(x));
+                self.code.push(self.constants.len() as u8 - 1);
+            }
+            SrcSexpr::Int(x) => {
+                self.code.push(Op::Constant.into());
+                self.constants.push(ConstantValue::Integer(x));
+                self.code.push(self.constants.len() as u8 - 1);
+            }
+            SrcSexpr::Float(x) => {
+                self.code.push(Op::Constant.into());
+                self.constants.push(ConstantValue::Float(x));
+                self.code.push(self.constants.len() as u8 - 1);
+            }
+            SrcSexpr::String(x) => {
+                self.code.push(Op::Constant.into());
+                self.constants
+                    .push(ConstantValue::Object(ConstantObject::String(x)));
+                self.code.push(self.constants.len() as u8 - 1);
+            }
+            SrcSexpr::Symbol(x) => {
+                self.code.push(Op::Constant.into());
+                self.constants
+                    .push(ConstantValue::Object(ConstantObject::Symbol(x)));
+                self.code.push(self.constants.len() as u8 - 1);
+            }
+            // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
+            SrcSexpr::List(sexprs) => {
+                // nil for end of list
+                self.code.push(Op::Constant.into());
+                self.constants.push(ConstantValue::Nil);
+                self.code.push(self.constants.len() as u8 - 1);
+
+                // cons each element in reverse order
+                for sexpr in sexprs.into_iter().rev() {
+                    self.compile_self_evaluation(sexpr, quote_level);
+                    self.code.push(Op::Cons.into());
+                }
+            }
+            SrcSexpr::Quote(quoted_sexpr) => {
+                self.compile_self_evaluation(*quoted_sexpr, quote_level + 1);
+                // this is kinda hacky:
+                // The first level of quoting is handled by the compiler, by compiling, for example, `'x` to the literal symbol `x`
+                // in the case of `''x`, the first quote is handled by the compiler, and the second quote is handled here:
+                if quote_level >= 2 {
+                    self.code.push(Op::Quote.into());
+                }
             }
         }
     }
-}
 
-fn compile_function(name: Option<String>, function_expr: FunctionExpression) -> Function {
-    let mut code = vec![];
-    let mut constants = vec![];
-    let mut local_and_arg_tracker = function_expr.parameters.clone();
-    let arity = function_expr.parameters.len();
+    // sibling function to `compile_expressions`
+    fn compile_function(mut self: Self, function_expr: FunctionExpression) -> Function {
+        self.local_and_arg_tracker = function_expr.parameters.clone();
 
-    for expr in function_expr.body {
-        compile_expression(expr, &mut code, &mut constants, &mut local_and_arg_tracker);
+        let arity = function_expr.parameters.len();
+
+        for expr in function_expr.body {
+            self.compile_expression(expr);
+        }
+
+        self.code.push(Op::Return.into());
+        let num_locals = self.local_and_arg_tracker.len() - arity;
+
+        Function::new(
+            function_expr.name.unwrap_or("anonymous".to_string()),
+            arity,
+            num_locals as usize,
+            BytecodeChunk::new(self.code, self.constants),
+        )
     }
 
-    code.push(Op::Return.into());
-    let num_locals = local_and_arg_tracker.len() - arity;
+    fn compile_ast(mut self: Self, ast: Ast) -> BytecodeChunk {
+        // let sexprs = macro_expand(sexprs);
+        let expressions = ast
+            .expressions
+            .iter()
+            .map(|s| structure_sexpr(s, false)) // top-level isn't in a function
+            .collect::<Vec<Expression>>();
 
-    Function::new(
-        name.unwrap_or("anonymous".to_string()),
-        arity,
-        num_locals as usize,
-        BytecodeChunk::new(code, constants),
-    )
-}
+        // println!("{:#?}", expressions);
 
-fn compile_ast(ast: Ast) -> BytecodeChunk {
-    // let sexprs = macro_expand(sexprs);
-    let expressions = ast
-        .expressions
-        .iter()
-        .map(|s| structure_sexpr(s, false)) // top-level isn't in a function
-        .collect::<Vec<Expression>>();
-
-    // println!("{:#?}", expressions);
-
-    compile_expressions(expressions)
-}
-
-fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
-    let mut code: Vec<u8> = vec![];
-    let mut constants: Vec<ConstantValue> = vec![];
-    let mut local_and_arg_tracker: Vec<String> = vec![];
-    for expression in expressions {
-        compile_expression(
-            expression,
-            &mut code,
-            &mut constants,
-            &mut local_and_arg_tracker,
-        );
+        self.compile_expressions(expressions)
     }
-    code.push(Op::DebugEnd.into());
-    BytecodeChunk::new(code, constants)
-}
 
-pub fn compile(src: &String) -> BytecodeChunk {
-    let tokens = lexer::lex(src).unwrap_or_else(|e| {
-        panic!("Lexing error: {}", e);
-    });
-    // println!("{:#?}", tokens);
+    fn compile_expressions(mut self: Self, expressions: Vec<Expression>) -> BytecodeChunk {
+        for expression in expressions {
+            self.compile_expression(expression);
+        }
+        self.code.push(Op::DebugEnd.into());
 
-    let ast = parser::parse(tokens).unwrap_or_else(|e| {
-        panic!("Parsing error: {}", e);
-    });
-    // println!("{:#?}", ast);
+        BytecodeChunk::new(self.code, self.constants)
+    }
 
-    compile_ast(ast)
+    pub fn compile(mut self: Self, src: &String) -> BytecodeChunk {
+        let tokens = lexer::lex(src).unwrap_or_else(|e| {
+            panic!("Lexing error: {}", e);
+        });
+        // println!("{:#?}", tokens);
+
+        let ast = parser::parse(tokens).unwrap_or_else(|e| {
+            panic!("Parsing error: {}", e);
+        });
+        // println!("{:#?}", ast);
+
+        self.compile_ast(ast)
+    }
+
+    pub fn new() -> Self {
+        ChunkCompiler {
+            constants: vec![],
+            local_and_arg_tracker: vec![],
+            parent: None,
+            code: vec![],
+        }
+    }
+
+    fn with_parent(parent: &'a Self) -> Self {
+        ChunkCompiler {
+            constants: vec![],
+            local_and_arg_tracker: vec![],
+            parent: Some(Box::new(parent)),
+            code: vec![],
+        }
+    }
+
+    // fn for_function(parent: &'a Self, function_expr: FunctionExpression) -> Self {
+    //     ChunkCompiler {
+    //         constants: vec![],
+    //         local_and_arg_tracker: function_expr.parameters.clone(),
+    //         parent: Some(Box::new(parent)),
+    //         code: vec![],
+    //     }
+    // }
 }
 
 #[cfg(test)]
@@ -386,7 +347,7 @@ mod tests {
             then: Box::new(Expression::SrcSexpr(SrcSexpr::Int(12))),
             else_: Box::new(Expression::SrcSexpr(SrcSexpr::Int(13))),
         };
-        let bc = compile_expressions(vec![expression]);
+        let bc = ChunkCompiler::new().compile_expressions(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -424,7 +385,7 @@ mod tests {
             name: "foo".to_string(),
             value: Box::new(Expression::SrcSexpr(SrcSexpr::Int(11))),
         };
-        let bc = compile_expressions(vec![expression]);
+        let bc = ChunkCompiler::new().compile_expressions(vec![expression]);
         assert_eq!(
             bc.code,
             vec![
@@ -463,7 +424,7 @@ mod tests {
             Expression::SrcSexpr(SrcSexpr::Symbol("foo".to_string())),
         ];
 
-        let bc = compile_expressions(program);
+        let bc = ChunkCompiler::new().compile_expressions(program);
 
         assert_eq!(
             bc.constants,
@@ -504,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_call_function() {
-        let bc = compile_expressions(vec![Expression::RegularForm(vec![
+        let bc = ChunkCompiler::new().compile_expressions(vec![Expression::RegularForm(vec![
             Expression::SrcSexpr(SrcSexpr::Symbol("*".to_string())),
             Expression::SrcSexpr(SrcSexpr::Int(11)),
             Expression::SrcSexpr(SrcSexpr::Int(12)),
@@ -537,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_function_with_computed_arguments() {
-        let bc = compile_expressions(vec![Expression::RegularForm(vec![
+        let bc = ChunkCompiler::new().compile_expressions(vec![Expression::RegularForm(vec![
             Expression::SrcSexpr(SrcSexpr::Symbol("+".to_string())),
             Expression::RegularForm(vec![
                 Expression::SrcSexpr(SrcSexpr::Symbol("+".to_string())),
@@ -598,9 +559,13 @@ mod tests {
     }
     #[test]
     fn test_cons() {
-        let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-            SrcSexpr::List(vec![SrcSexpr::Int(1), SrcSexpr::Int(2), SrcSexpr::Int(3)]),
-        )))]);
+        let bc = ChunkCompiler::new().compile_expressions(vec![Expression::SrcSexpr(
+            SrcSexpr::Quote(Box::new(SrcSexpr::List(vec![
+                SrcSexpr::Int(1),
+                SrcSexpr::Int(2),
+                SrcSexpr::Int(3),
+            ]))),
+        )]);
 
         assert_eq!(
             bc.constants,
@@ -633,13 +598,13 @@ mod tests {
 
     #[test]
     fn test_cons_nested() {
-        let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-            SrcSexpr::List(vec![
+        let bc = ChunkCompiler::new().compile_expressions(vec![Expression::SrcSexpr(
+            SrcSexpr::Quote(Box::new(SrcSexpr::List(vec![
                 SrcSexpr::Int(10),
                 SrcSexpr::List(vec![SrcSexpr::Int(20), SrcSexpr::Int(30)]),
                 SrcSexpr::Int(40),
-            ]),
-        )))]);
+            ]))),
+        )]);
 
         assert_eq!(
             bc.constants,

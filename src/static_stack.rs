@@ -61,6 +61,7 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
             return None;
         }
         let value = self.stack[self.ptr as usize];
+        self.stack[self.ptr as usize] = Default::default();
         self.ptr -= 1;
         Some(value)
     }

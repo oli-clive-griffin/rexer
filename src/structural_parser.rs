@@ -56,11 +56,6 @@ fn map_to_special_form(sexprs: &[SrcSexpr], in_function: bool) -> Option<Express
                 };
 
                 let value = Box::new(structure_sexpr(&rest[1], in_function));
-                r#"
-                (define a 1)
-                (defun (x)
-                    (define y 1))
-                "#;
                 return Some(if in_function {
                     Expression::LocalDefine { name, value }
                 } else {
@@ -96,9 +91,29 @@ fn map_to_special_form(sexprs: &[SrcSexpr], in_function: bool) -> Option<Express
                     .map(|s| structure_sexpr(s, true))
                     .collect();
 
-                return Some(Expression::GlobalFunctionDeclaration {
-                    name,
-                    function_expr: FunctionExpression::new(parameters, body_expressions),
+                return Some(if in_function {
+                    Expression::LocalDefine {
+                        name: name.clone(),
+                        value: Box::new(Expression::FunctionLiteral(FunctionExpression::new(
+                            parameters,
+                            body_expressions,
+                            Some(name),
+                        ))),
+                    }
+                } else {
+                    Expression::DeclareGlobal {
+                        name: name.clone(),
+                        value: Box::new(Expression::FunctionLiteral(FunctionExpression::new(
+                            parameters,
+                            body_expressions,
+                            Some(name),
+                        ))),
+                    }
+                    //     Expression::GlobalFunctionDeclaration {
+                    //         name,
+                    //         function_expr: FunctionExpression::new(parameters, body_expressions),
+                    //     }
+                    // });
                 });
             }
             "fn" => {
@@ -123,6 +138,7 @@ fn map_to_special_form(sexprs: &[SrcSexpr], in_function: bool) -> Option<Express
                 return Some(Expression::FunctionLiteral(FunctionExpression::new(
                     parameters,
                     body_expressions,
+                    None,
                 )));
             }
             _ => {}

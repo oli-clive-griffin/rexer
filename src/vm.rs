@@ -15,7 +15,7 @@ pub struct VM {
     ip: *const u8,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
-    global_constants: Vec<ConstantValue>,
+    chunk_constants: Vec<ConstantValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,7 +324,7 @@ impl VM {
             heap: std::ptr::null_mut(),
             globals: HashMap::default(),
             callframes: Vec::default(),
-            global_constants: Vec::default(),
+            chunk_constants: Vec::default(),
         };
 
         for obj in builtins() {
@@ -337,8 +337,11 @@ impl VM {
     }
 
     pub fn run(&mut self, chunk: BytecodeChunk) {
+        // these are kind of like a cache of `chunk`
+        // not sure I like this pattern though
         self.ip = chunk.code.as_ptr();
-        self.global_constants = chunk.constants;
+        self.chunk_constants = chunk.constants;
+
         loop {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
             match byte {
@@ -407,15 +410,19 @@ impl VM {
             .callframes
             .pop()
             .expect("expected a call frame to return from");
+
         self.ip = frame.return_address;
+
         // clean up the stack
         let return_val = self.stack.pop().expect("expected a return value");
-        // pop the arguments
-        for _ in 0..frame.arity {
+
+        // pop the arguments and locals
+        for _ in 0..(frame.arity + frame.num_locals) {
             self.stack.pop();
         }
         // pop the function
         self.stack.pop();
+
         self.stack.push(return_val);
         self.advance();
     }
@@ -671,6 +678,7 @@ impl VM {
     fn consume_next_byte_as_constant(&mut self) -> SmallVal {
         unsafe {
             self.ip = self.ip.add(1);
+
             let constant_idx = *self.ip as usize;
 
             match self.get_constant(constant_idx) {
@@ -691,7 +699,8 @@ impl VM {
         if let Some(frame) = &self.callframes.last() {
             return &frame.constants[idx];
         };
-        &self.global_constants[idx]
+
+        &self.chunk_constants[idx]
     }
 
     fn consume_next_byte_as_byte(&mut self) -> u8 {

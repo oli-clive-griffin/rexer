@@ -1,4 +1,4 @@
-use rusp::compiler::compile;
+use rusp::compiler::ChunkCompiler;
 use rusp::vm::VM;
 
 fn main() {
@@ -11,5 +11,5 @@ fn main() {
     let contents =
         std::fs::read_to_string(&args[1]).expect("Something went wrong reading the file");
 
-    VM::default().run(compile(&contents))
+    VM::default().run(ChunkCompiler::new().compile(&contents))
 }
