@@ -19,13 +19,34 @@ pub struct VM {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Builtin {
+    name: &'static str,
+    arity: usize,
+    func: fn(&mut &[SmallVal]) -> SmallVal,
+}
+
+const PLUS: Builtin = Builtin {
+    name: "+",
+    arity: 2,
+    func: |args| match args {
+        [] => panic!("expected 2 arguments"),
+        [SmallVal::Integer(a), SmallVal::Integer(b)] => SmallVal::Integer(*a + *b),
+        [SmallVal::Float(a), SmallVal::Float(b)] => SmallVal::Float(*a + *b),
+        [SmallVal::Integer(a), SmallVal::Float(b)] => SmallVal::Float(*a as f64 + *b),
+        [SmallVal::Float(a), SmallVal::Integer(b)] => SmallVal::Float(*a + *b as f64),
+        _ => panic!("expected integer or float"),
+    },
+};
+
+#[derive(Debug, Clone, PartialEq)]
 /// only valid on the heap
-pub enum ObjectValue {
+enum ObjectValue {
     SmallValue(SmallVal),
     String(String),
     Function(Function),
     Symbol(String),
     ConsCell(ConsCell),
+    Builtin(Builtin), // todo actually hook this in
 }
 impl ObjectValue {
     fn truthy(&self) -> bool {
@@ -34,7 +55,8 @@ impl ObjectValue {
             ObjectValue::String(_) => true,
             ObjectValue::Function(_) => true,
             ObjectValue::Symbol(_) => true,
-            ObjectValue::ConsCell(_) => true, // '() is literally `nil`
+            ObjectValue::ConsCell(_) => true,
+            ObjectValue::Builtin(_) => true,
         }
     }
 }
@@ -71,7 +93,7 @@ impl Display for ObjectValue {
             ObjectValue::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
             ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
-            // ObjectValue::Quote(c) => write!(f, "'{}", unsafe { &**c }),
+            ObjectValue::Builtin(b) => write!(f, "builtin <{}>", b.name),
         }
     }
 }
@@ -236,6 +258,10 @@ impl BytecodeChunk {
     pub fn new(code: Vec<u8>, constants: Vec<ConstantValue>) -> Self {
         BytecodeChunk { code, constants }
     }
+
+    // pub fn new(code: Vec<u8>, constants: Vec<ConstantValue>) -> Self {
+    //     BytecodeChunk { code, constants }
+    // }
 }
 
 #[repr(u8)]
@@ -289,6 +315,7 @@ fn binary_function(name: &'static str, op: Op) -> Function {
     }
 }
 
+// todo make **real** builtins, i.e. rust code
 fn builtins() -> Vec<Function> {
     vec![
         binary_function("*", Op::Mul),
@@ -332,6 +359,10 @@ impl VM {
             let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Function(obj)) };
             vm.globals.insert(name, SmallVal::ObjectPtr(obj_ptr));
         }
+
+        let plus = unsafe { vm.allocate_value(ObjectValue::Builtin(PLUS)) };
+        vm.globals
+            .insert(PLUS.name.to_string(), SmallVal::ObjectPtr(plus));
 
         vm
     }
@@ -454,35 +485,41 @@ impl VM {
         let given_arity = self.consume_next_byte_as_byte();
         // let callframe = self.callframes.last().unwrap();
 
-        let func_obj = match self
+        match self
             .stack
             .peek_back(given_arity as usize /* + callframe.num_locals*/)
             .unwrap()
         {
             SmallVal::ObjectPtr(obj) => match &unsafe { &*obj }.value {
-                ObjectValue::Function(f) => f,
+                ObjectValue::Function(func_obj) => {
+                    if func_obj.arity != given_arity as usize {
+                        self.runtime_error(
+                            format!(
+                                "arity mismatch: Expected {} arguments, got {}",
+                                func_obj.arity, given_arity
+                            )
+                            .as_str(),
+                        )
+                    }
+
+                    self.callframes.push(self.make_callframe(func_obj));
+
+                    // set to the start of the function
+                    self.ip = func_obj.bytecode.code.as_ptr();
+
+                    // allocate space for the locals so they don't get overwritten
+                    self.stack.ptr += func_obj.num_locals as i32;
+                }
+                ObjectValue::Builtin(b) => {
+                    let args = self.stack.pop_n(given_arity as usize).unwrap();
+                    let result = (b.func)(&mut &args[..]);
+                    self.stack.push(result);
+                    self.advance();
+                }
                 _ => panic!("expected ObjectValue::Function"),
             },
             got => panic!("expected StackValue::Object, got {:?}", got),
         };
-
-        if func_obj.arity != given_arity as usize {
-            self.runtime_error(
-                format!(
-                    "arity mismatch: Expected {} arguments, got {}",
-                    func_obj.arity, given_arity
-                )
-                .as_str(),
-            )
-        }
-
-        self.callframes.push(self.make_callframe(func_obj));
-
-        // set to the start of the function
-        self.ip = func_obj.bytecode.code.as_ptr();
-
-        // allocate space for the locals so they don't get overwritten
-        self.stack.ptr += func_obj.num_locals as i32;
     }
 
     fn make_callframe(&self, func_obj: &Function) -> CallFrame {

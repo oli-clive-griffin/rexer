@@ -59,14 +59,34 @@ impl FunctionExpression {
     }
 }
 
-pub struct ChunkCompiler<'a> {
+/// a value in the enclosing scope
+pub struct Upvalue {
+    is_local: bool,
+    /// local index in the enclosing scope
+    index: usize,
+}
+
+pub struct ChunkCompiler {
     code: Vec<u8>,
     constants: Vec<ConstantValue>,
     local_and_arg_tracker: Vec<String>,
-    parent: Option<Box<&'a ChunkCompiler<'a>>>,
+    upvalues: Vec<Upvalue>,
+    parent: Option<Box<ChunkCompiler>>,
 }
 
-impl<'a> ChunkCompiler<'a> {
+// impl ChunkCompiler {
+//     fn with_parent(parent: Self) -> Self {
+//         ChunkCompiler {
+//             constants: vec![],
+//             local_and_arg_tracker: vec![],
+//             parent: Some(Box::new(parent)),
+//             code: vec![],
+//             upvalues: vec![],
+//         }
+//     }
+// }
+
+impl ChunkCompiler {
     fn compile_expression(self: &mut Self, expression: Expression) {
         match expression {
             Expression::SrcSexpr(sexpr) => match sexpr {
@@ -88,11 +108,12 @@ impl<'a> ChunkCompiler<'a> {
             } => self.compile_if_statement(condition, else_, then),
             Expression::RegularForm(exprs) => self.compile_regular_form(exprs),
             Expression::FunctionLiteral(function_expr) => {
-                let f = ChunkCompiler::with_parent(self).compile_function(function_expr);
-
+                // HERE
+                let comp = ChunkCompiler::with_parent(self);
+                let f = comp.compile_function(function_expr);
                 self.code.push(Op::Constant.into());
                 self.constants
-                    .push(ConstantValue::Object(ConstantObject::Function(f)));
+                    .push(ConstantValue::Nil);
                 self.code.push(self.constants.len() as u8 - 1);
             }
             Expression::DeclareGlobal { name, value } => {
@@ -108,23 +129,23 @@ impl<'a> ChunkCompiler<'a> {
             panic!("redefining local variable")
         };
         self.local_and_arg_tracker.push(name.clone());
-        self.compile_expression(*value);
-        self.code.push(Op::Define.into());
-        self.code.push(self.local_and_arg_tracker.len() as u8);
+        self.compile_expression(*value); // argument requires that `*self` is borrowed for `'a`. mutable borrow occurs here
+        self.code.push(Op::Define.into()); // cannot borrow `self.code` as mutable more than once at a time. second mutable borrow occurs here
+
+        // self.code.push(self.local_and_arg_tracker.len() as u8);
     }
 
     fn compile_symbol_as_reference(self: &mut Self, sym: String) {
         // evaulate as reference as opposed to value
         // local / function argument
-        let local_idx = self.local_and_arg_tracker.iter().position(|x| x == &sym);
+        let local_idx = self.resolve_local_pos(&sym);
+
         if let Some(idx) = local_idx {
             self.code.push(Op::ReferenceLocal.into());
             self.code.push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
-        } else
-        // if let Some(parent) = &self.parent {
-
-        // }
-        {
+        } else if let Some(_upvalue) = self.resolve_upvalue(&sym) {
+            panic!("this shouldn't be implemented yet")
+        } else {
             // fall back to global
             self.code.push(Op::ReferenceGlobal.into());
             // this can be optimized by reusing the same constant for the same symbol
@@ -265,7 +286,7 @@ impl<'a> ChunkCompiler<'a> {
         )
     }
 
-    fn compile_ast(mut self: Self, ast: Ast) -> BytecodeChunk {
+    fn compile_ast(self: Self, ast: Ast) -> BytecodeChunk {
         // let sexprs = macro_expand(sexprs);
         let expressions = ast
             .expressions
@@ -287,7 +308,7 @@ impl<'a> ChunkCompiler<'a> {
         BytecodeChunk::new(self.code, self.constants)
     }
 
-    pub fn compile(mut self: Self, src: &String) -> BytecodeChunk {
+    pub fn compile(self: Self, src: &String) -> BytecodeChunk {
         let tokens = lexer::lex(src).unwrap_or_else(|e| {
             panic!("Lexing error: {}", e);
         });
@@ -307,18 +328,45 @@ impl<'a> ChunkCompiler<'a> {
             local_and_arg_tracker: vec![],
             parent: None,
             code: vec![],
+            upvalues: vec![],
         }
     }
 
-    fn with_parent(parent: &'a Self) -> Self {
+    // fn with_parent(parent: &mut Self) -> Self {
+    fn with_parent(parent: Self) -> Self {
         ChunkCompiler {
             constants: vec![],
             local_and_arg_tracker: vec![],
             parent: Some(Box::new(parent)),
             code: vec![],
+            upvalues: vec![],
         }
     }
 
+    fn resolve_upvalue(&mut self, sym: &str) -> Option<usize> {
+        if let Some(ref mut parent) = self.parent {
+            if let Some(index) = parent.resolve_local_pos(sym) {
+                let upvalue_idx = self.add_upvalue(index, true);
+                return Some(upvalue_idx);
+            };
+
+            if let Some(index) = parent.resolve_upvalue(sym) {
+                let upvalue_idx = self.add_upvalue(index, false);
+                return Some(upvalue_idx);
+            };
+        }
+        None
+    }
+
+    fn resolve_local_pos(&self, sym: &str) -> Option<usize> {
+        self.local_and_arg_tracker.iter().position(|x| x == sym)
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
+        // todo dedup
+        self.upvalues.push(Upvalue { index, is_local });
+        self.upvalues.len() - 1
+    }
     // fn for_function(parent: &'a Self, function_expr: FunctionExpression) -> Self {
     //     ChunkCompiler {
     //         constants: vec![],

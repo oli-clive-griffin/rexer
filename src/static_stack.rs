@@ -85,4 +85,15 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
     pub fn size(&self) -> usize {
         (self.ptr + 1) as usize
     }
+    
+    pub fn pop_n(&self, n: usize) -> Option<Vec<T>> {
+        if n > self.size() {
+            return None;
+        }
+        let mut vec = Vec::with_capacity(n);
+        for i in 0..n {
+            vec.push(self.stack[self.ptr as usize - i]);
+        }
+        Some(vec)
+    }
 }
