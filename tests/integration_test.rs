@@ -1,4 +1,4 @@
-use rusp::compiler::ChunkCompiler;
+use rusp::compiler::compile;
 use rusp::vm::VM;
 
 #[test]
@@ -13,7 +13,7 @@ fn actually_e2e() {
 "#
     .to_owned();
 
-    let bc = ChunkCompiler::new().compile(&src);
+    let bc = compile(&src);
     let mut vm = VM::default();
     vm.run(bc);
 }
@@ -31,7 +31,7 @@ fn actually_e2e_2() {
 "#
     .to_owned();
 
-    let bc = ChunkCompiler::new().compile(&src);
+    let bc = compile(&src);
 
     let fib = |n: i64| -> i64 {
         let mut a = 0;
@@ -50,7 +50,7 @@ fn actually_e2e_2() {
 }
 
 fn run_code(src: &str) {
-    let bc = ChunkCompiler::new().compile(&src.to_string());
+    let bc = compile(&src.to_string());
     VM::default().run(bc);
 }
 
@@ -253,7 +253,7 @@ fn target_spec() {
 "#
     .to_owned();
 
-    let bc = ChunkCompiler::new().compile(&src);
+    let bc = compile(&src);
 
     let fib = |n: i64| -> i64 {
         let mut a = 0;

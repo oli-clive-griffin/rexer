@@ -482,17 +482,17 @@ impl VM {
         // expects the stack to be:
         // [..., function, arg1, arg2, ... argN]
         // and the operand to be the arity of the function, so we can lookup the function and args
-        let given_arity = self.consume_next_byte_as_byte();
+        let given_arity = self.consume_next_byte_as_byte() as usize;
         // let callframe = self.callframes.last().unwrap();
 
         match self
             .stack
-            .peek_back(given_arity as usize /* + callframe.num_locals*/)
+            .peek_back(given_arity /* + callframe.num_locals*/)
             .unwrap()
         {
             SmallVal::ObjectPtr(obj) => match &unsafe { &*obj }.value {
                 ObjectValue::Function(func_obj) => {
-                    if func_obj.arity != given_arity as usize {
+                    if func_obj.arity != given_arity {
                         self.runtime_error(
                             format!(
                                 "arity mismatch: Expected {} arguments, got {}",
@@ -508,11 +508,16 @@ impl VM {
                     self.ip = func_obj.bytecode.code.as_ptr();
 
                     // allocate space for the locals so they don't get overwritten
+                    // args are already at the top of the stack
                     self.stack.ptr += func_obj.num_locals as i32;
                 }
                 ObjectValue::Builtin(b) => {
-                    let args = self.stack.pop_n(given_arity as usize).unwrap();
+                    let args = self
+                        .stack
+                        .pop_n(given_arity)
+                        .unwrap();
                     let result = (b.func)(&mut &args[..]);
+                    self.stack.pop(); // pop off function too
                     self.stack.push(result);
                     self.advance();
                 }
@@ -788,7 +793,8 @@ mod tests {
             constants: vec![ConstantValue::Integer(5)],
         };
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(5)]));
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(5));
     }
 
     #[test]
@@ -837,7 +843,8 @@ mod tests {
                 ConstantValue::Integer(2),
             ],
         });
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(2)]));
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(2));
         assert_eq!(vm.ip, unsafe { ptr.add(10) }); // idx after the last byte
     }
 
@@ -869,7 +876,8 @@ mod tests {
 
         let mut vm = VM::default();
         vm.run(chunk);
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(2)]));
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(2));
         assert_eq!(vm.ip, unsafe { ptr.add(10) });
     }
 
@@ -941,7 +949,8 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(50)]));
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(50));
     }
 
     #[test]
@@ -986,7 +995,8 @@ mod tests {
         let mut vm = VM::default();
         vm.run(bc);
         assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(50));
-        assert_eq!(vm.stack, StaticStack::from([SmallVal::Integer(50)]));
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(50));
     }
 
     // this is so jank but it'll do!
@@ -1048,26 +1058,5 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(&cell.0, &SmallVal::Integer(10));
-    }
-
-    impl<T: Default + Copy, const MAX: usize, const N: usize> From<[T; N]> for StaticStack<T, MAX> {
-        fn from(values: [T; N]) -> Self {
-            let mut stack = Self::new();
-            for value in values {
-                stack.push(value);
-            }
-            stack
-        }
-    }
-
-    impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
-        fn peek_top(&self) -> Option<&T> {
-            self.at(self.ptr as usize)
-        }
-
-        #[allow(clippy::len_without_is_empty)]
-        fn len(&self) -> usize {
-            (self.ptr + 1) as usize
-        }
     }
 }

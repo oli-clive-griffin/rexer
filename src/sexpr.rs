@@ -2,10 +2,10 @@ use crate::builtins::BuiltIn;
 
 #[derive(Debug, PartialEq, Clone)]
 /// Previously known as `Sexpr`
-pub enum Sexpr {
-    List(Vec<Sexpr>),
-    Quote(Box<Sexpr>),
-    QuasiQuotedList(Vec<Sexpr>),
+pub enum LispValue {
+    List(Vec<LispValue>),
+    Quote(Box<LispValue>),
+    QuasiQuotedList(Vec<LispValue>),
     Symbol(String),
     String(String),
     Bool(bool),
@@ -13,14 +13,14 @@ pub enum Sexpr {
     Float(f64),
     Function {
         parameters: Vec<String>,
-        body: Vec<Sexpr>,
+        body: Vec<LispValue>,
     },
     Macro {
         parameters: Vec<String>,
-        body: Box<Sexpr>,
+        body: Box<LispValue>,
     },
     BuiltIn(BuiltIn),
-    CommaUnquote(Box<Sexpr>),
+    CommaUnquote(Box<LispValue>),
     Nil,
 }
 
@@ -33,19 +33,18 @@ pub enum SrcSexpr {
     Symbol(String), // +, -, *, /, foo
     List(Vec<SrcSexpr>), // (+ 2 3)
     Quote(Box<SrcSexpr>), // '(+ 2 3), 'foo
-    // mirror of compiler::Literal
 }
 
 impl SrcSexpr {
-    pub fn to_sexpr(&self) -> Sexpr {
+    pub fn to_sexpr(&self) -> LispValue {
         match self {
-            SrcSexpr::List(sexprs) => Sexpr::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
-            SrcSexpr::Symbol(s) => Sexpr::Symbol(s.clone()),
-            SrcSexpr::String(s) => Sexpr::String(s.clone()),
-            SrcSexpr::Bool(b) => Sexpr::Bool(*b),
-            SrcSexpr::Int(i) => Sexpr::Int(*i),
-            SrcSexpr::Float(f) => Sexpr::Float(*f),
-            SrcSexpr::Quote(sexpr) => Sexpr::Quote(Box::new(sexpr.to_sexpr())),
+            SrcSexpr::List(sexprs) => LispValue::List(sexprs.iter().map(|t| t.to_sexpr()).collect()),
+            SrcSexpr::Symbol(s) => LispValue::Symbol(s.clone()),
+            SrcSexpr::String(s) => LispValue::String(s.clone()),
+            SrcSexpr::Bool(b) => LispValue::Bool(*b),
+            SrcSexpr::Int(i) => LispValue::Int(*i),
+            SrcSexpr::Float(f) => LispValue::Float(*f),
+            SrcSexpr::Quote(sexpr) => LispValue::Quote(Box::new(sexpr.to_sexpr())),
         }
     }
 }

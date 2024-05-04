@@ -82,18 +82,33 @@ impl<T: Default + Copy, const MAX: usize> StaticStack<T, MAX> {
         self.stack.get_mut(idx)
     }
 
-    pub fn size(&self) -> usize {
-        (self.ptr + 1) as usize
-    }
-    
-    pub fn pop_n(&self, n: usize) -> Option<Vec<T>> {
-        if n > self.size() {
+    pub fn pop_n(&mut self, n: usize) -> Option<Vec<T>> {
+        if n > self.len() {
             return None;
         }
-        let mut vec = Vec::with_capacity(n);
-        for i in 0..n {
-            vec.push(self.stack[self.ptr as usize - i]);
-        }
+        let start = self.ptr as usize + 1 - n; // plus one first to prevent underflow
+        let end = self.ptr as usize + 1;
+        let vec = self.stack[start..end].to_vec();
+        self.ptr -= n as i32;
         Some(vec)
+    }
+
+    pub fn peek_top(&self) -> Option<&T> {
+        self.at(self.ptr as usize)
+    }
+
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        (self.ptr + 1) as usize
+    }
+}
+
+impl<T: Default + Copy, const MAX: usize, const N: usize> From<[T; N]> for StaticStack<T, MAX> {
+    fn from(values: [T; N]) -> Self {
+        let mut stack = Self::new();
+        for value in values {
+            stack.push(value);
+        }
+        stack
     }
 }

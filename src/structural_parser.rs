@@ -5,12 +5,7 @@ use crate::{
 
 pub fn structure_sexpr(sexpr: &SrcSexpr, in_function: bool) -> Expression {
     match sexpr {
-        SrcSexpr::Symbol(a) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())),
-        SrcSexpr::String(a) => Expression::SrcSexpr(SrcSexpr::String(a.clone())),
-        SrcSexpr::Bool(a) => Expression::SrcSexpr(SrcSexpr::Bool(*a)),
-        SrcSexpr::Int(a) => Expression::SrcSexpr(SrcSexpr::Int(*a)),
-        SrcSexpr::Float(a) => Expression::SrcSexpr(SrcSexpr::Float(*a)),
-        SrcSexpr::Quote(sexpr) => Expression::SrcSexpr(SrcSexpr::Quote(Box::new(*sexpr.clone()))),
+        // SrcSexpr::Symbol(_) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())), // TODO this might be better as Expression::Ref
         SrcSexpr::List(sexprs) => {
             if let Some(special_form) = map_to_special_form(sexprs, in_function) {
                 return special_form;
@@ -22,6 +17,8 @@ pub fn structure_sexpr(sexpr: &SrcSexpr, in_function: bool) -> Expression {
                     .collect(),
             )
         }
+        // self-eval
+        v => Expression::SrcSexpr(v.clone()),
     }
 }
 
