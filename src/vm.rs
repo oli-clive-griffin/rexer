@@ -5,13 +5,21 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
-use std::default;
 use std::fmt::{Debug, Display};
+use std::{default, vec};
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+pub enum CaptureType {
+    SurroundingUpvalue = 0,
+    SurroundingLocal = 1,
+}
+use CaptureType::*;
 
 const STACK_SIZE: usize = 4096; // will need to dial this in
 pub struct VM {
     pub stack: StaticStack<SmallVal, STACK_SIZE>, // for testing ugh
-    pub globals: HashMap<String, SmallVal>,       // same, // TODO make interface nicer
+    pub globals: HashMap<String, SmallVal>,       // same, need to make interface nicer
     ip: *const u8,
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
@@ -39,24 +47,51 @@ const PLUS: Builtin = Builtin {
 };
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct UpValue {
+    location: *mut SmallVal,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Closure {
+    pub f: Function,
+    // todo implement runtime checks on upvalues.len() == num_upvalues before access, something like that
+    upvalues: Vec<*mut HeapObject>,
+    pub num_upvalues: usize,
+}
+impl Closure {
+    pub fn new(f: Function, num_upvalues: usize) -> Self {
+        Closure {
+            f,
+            num_upvalues,
+            upvalues: (0..num_upvalues).map(|_| std::ptr::null_mut()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 /// only valid on the heap
 enum ObjectValue {
     SmallValue(SmallVal),
     String(String),
-    Function(Function),
+    // Function(Function),
+    Closure(Closure),
     Symbol(String),
     ConsCell(ConsCell),
-    Builtin(Builtin), // todo actually hook this in
+    Builtin(Builtin),
+    Upvalue(UpValue),
 }
+
 impl ObjectValue {
     fn truthy(&self) -> bool {
         match self {
             ObjectValue::SmallValue(v) => v.truthy(),
             ObjectValue::String(_) => true,
-            ObjectValue::Function(_) => true,
+            // ObjectValue::Function(_) => true,
             ObjectValue::Symbol(_) => true,
             ObjectValue::ConsCell(_) => true,
             ObjectValue::Builtin(_) => true,
+            ObjectValue::Upvalue(_) => unreachable!(),
+            ObjectValue::Closure(_) => true, // check
         }
     }
 }
@@ -89,11 +124,13 @@ impl Display for ObjectValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ObjectValue::String(s) => write!(f, "\"{}\"", s),
-            ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
+            // ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
             ObjectValue::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
             ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
             ObjectValue::Builtin(b) => write!(f, "builtin <{}>", b.name),
+            ObjectValue::Upvalue(u) => write!(f, "upvalue <{}>", &unsafe { &*u.location }),
+            ObjectValue::Closure(c) => write!(f, "closure <{}>", c.f.name),
         }
     }
 }
@@ -112,8 +149,8 @@ impl Display for ConstantValue {
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
-    name: String,
-    arity: usize,
+    pub name: String,
+    pub arity: usize,
     bytecode: Box<BytecodeChunk>,
     num_locals: usize,
 }
@@ -135,7 +172,7 @@ impl Function {
         Function {
             name,
             arity,
-            num_locals: num_locals,
+            num_locals,
             bytecode: Box::new(bytecode),
         }
     }
@@ -177,6 +214,19 @@ impl Display for SmallVal {
     }
 }
 
+// trait Pointer {
+//     type Target;
+//     fn deref(self) -> Self::Target;
+// }
+
+// impl Pointer for *mut HeapObject {
+//     type Target = ObjectValue;
+
+//     fn deref(self) -> Self::Target {
+//         unsafe { &*self }.value
+//     }
+// }
+
 impl default::Default for SmallVal {
     fn default() -> Self {
         SmallVal::Integer(69) // flag for debugging
@@ -185,11 +235,13 @@ impl default::Default for SmallVal {
 
 #[derive(Debug, Clone, PartialEq)]
 struct CallFrame {
+    closure: Closure,
+    // name: String,
+    // arity: usize,
+    // constants: Vec<ConstantValue>,
+    // num_locals: usize,
     return_address: *const u8,
     stack_frame_start: usize,
-    arity: usize,
-    constants: Vec<ConstantValue>,
-    num_locals: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,7 +256,8 @@ pub enum ConstantValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstantObject {
     String(String),
-    Function(Function),
+    // Function(Function),
+    Closure(Closure),
     Symbol(String),
 }
 
@@ -212,8 +265,9 @@ impl ConstantObject {
     fn as_object(&self) -> ObjectValue {
         match self {
             ConstantObject::String(s) => ObjectValue::String(s.clone()),
-            ConstantObject::Function(func) => ObjectValue::Function(func.clone()),
+            // ConstantObject::Function(f) => ObjectValue::Function(f.clone()),
             ConstantObject::Symbol(s) => ObjectValue::Symbol(s.clone()),
+            ConstantObject::Closure(c) => ObjectValue::Closure(c.clone()),
         }
     }
 }
@@ -223,8 +277,9 @@ impl Display for ConstantObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConstantObject::String(s) => write!(f, "\"{}\"", s),
-            ConstantObject::Function(func) => write!(f, "function <{}>", func.name),
-            ConstantObject::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
+            // ConstantObject::Function(func) => write!(f, "function <{}>", func.name),
+            ConstantObject::Symbol(s) => write!(f, "{}", s),
+            ConstantObject::Closure(c) => write!(f, "closure <{}>", c.f.name),
         }
     }
 }
@@ -287,6 +342,9 @@ pub enum Op {
     Print = 18,
     Quote = 19,
     Define = 20,
+    ReferenceUpvalue = 21,
+    SetUpvalue = 22,
+    Closure = 23,
     DebugEnd = 254,
 }
 
@@ -296,27 +354,30 @@ impl Default for VM {
     }
 }
 
-fn binary_function(name: &'static str, op: Op) -> Function {
-    Function {
-        num_locals: 0,
-        name: name.to_string(),
-        arity: 2,
-        bytecode: Box::new(BytecodeChunk {
-            code: vec![
-                Op::ReferenceLocal.into(),
-                1,
-                Op::ReferenceLocal.into(),
-                2,
-                op.into(),
-                Op::Return.into(),
-            ],
-            constants: vec![],
-        }),
+fn binary_function(name: &'static str, op: Op) -> Closure {
+    Closure {
+        f: Function {
+            num_locals: 0,
+            name: name.to_string(),
+            arity: 2,
+            bytecode: Box::new(BytecodeChunk {
+                code: vec![
+                    Op::ReferenceLocal.into(),
+                    1,
+                    Op::ReferenceLocal.into(),
+                    2,
+                    op.into(),
+                    Op::Return.into(),
+                ],
+                constants: vec![],
+            }),
+        },
+        upvalues: vec![],
+        num_upvalues: 0,
     }
 }
 
-// todo make **real** builtins, i.e. rust code
-fn builtins() -> Vec<Function> {
+fn builtins() -> Vec<Closure> {
     vec![
         binary_function("*", Op::Mul),
         binary_function("+", Op::Add),
@@ -326,19 +387,23 @@ fn builtins() -> Vec<Function> {
         binary_function("<", Op::LT),
         binary_function(">=", Op::GTE),
         binary_function("<=", Op::LTE),
-        Function {
-            num_locals: 0,
-            name: "print".to_string(),
-            arity: 1,
-            bytecode: Box::new(BytecodeChunk {
-                code: vec![
-                    Op::ReferenceLocal.into(),
-                    1,
-                    Op::Print.into(),
-                    Op::Return.into(),
-                ],
-                constants: vec![],
-            }),
+        Closure {
+            f: Function {
+                num_locals: 0,
+                name: "print".to_string(),
+                arity: 1,
+                bytecode: Box::new(BytecodeChunk {
+                    code: vec![
+                        Op::ReferenceLocal.into(),
+                        1,
+                        Op::Print.into(),
+                        Op::Return.into(),
+                    ],
+                    constants: vec![],
+                }),
+            },
+            upvalues: vec![],
+            num_upvalues: 0,
         },
     ]
 }
@@ -355,8 +420,8 @@ impl VM {
         };
 
         for obj in builtins() {
-            let name = obj.name.clone();
-            let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Function(obj)) };
+            let name = obj.f.name.clone();
+            let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Closure(obj)) };
             vm.globals.insert(name, SmallVal::ObjectPtr(obj_ptr));
         }
 
@@ -365,6 +430,10 @@ impl VM {
             .insert(PLUS.name.to_string(), SmallVal::ObjectPtr(plus));
 
         vm
+    }
+
+    fn frame(&self) -> &CallFrame {
+        self.callframes.last().expect("expected a call frame")
     }
 
     pub fn run(&mut self, chunk: BytecodeChunk) {
@@ -377,8 +446,6 @@ impl VM {
             let byte: Op = unsafe { *self.ip }.try_into().unwrap();
             match byte {
                 Op::Constant => self.handle_constant(),
-                Op::CondJump => self.handle_cond_jump(),
-                Op::Jump => self.handle_jump(),
                 Op::Add => self.handle_add(),
                 Op::Sub => self.handle_sub(),
                 Op::Mul => self.handle_mul(),
@@ -387,18 +454,92 @@ impl VM {
                 Op::LT => self.handle_lt(),
                 Op::GTE => self.handle_gte(),
                 Op::LTE => self.handle_lte(),
+                Op::Jump => self.handle_jump(),
+                Op::CondJump => self.handle_cond_jump(),
+                Op::FuncCall => self.handle_func_call(),
                 Op::DeclareGlobal => self.handle_declare_global(),
                 Op::ReferenceGlobal => self.handle_reference_global(),
                 Op::Print => self.handle_print(),
-                Op::FuncCall => self.handle_func_call(),
                 Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
                 Op::Quote => self.handle_quote(),
                 Op::Define => self.handle_local_define(),
                 Op::DebugEnd => return,
+                Op::Closure => self.handle_closure(),
+                Op::ReferenceUpvalue => self.handle_reference_upvalue(),
+                Op::SetUpvalue => self.handle_set_upvalue(),
             }
         }
+    }
+
+    fn handle_reference_upvalue(&mut self) {
+        let idx = self.consume_next_byte_as_byte() as usize;
+        let ptr = self.frame().closure.upvalues[idx];
+        match &unsafe { &*ptr }.value {
+            ObjectValue::Upvalue(_) => {}
+            _ => panic!("expected upvalue"),
+        };
+        self.stack.push(SmallVal::ObjectPtr(ptr));
+        self.advance();
+    }
+
+    fn handle_set_upvalue(&mut self) {
+        let value = self.stack.pop().expect("expected value");
+        let idx = self.consume_next_byte_as_byte() as usize;
+        let ptr = self.frame().closure.upvalues[idx];
+        match &unsafe { &*ptr }.value {
+            ObjectValue::Upvalue(uv) => {
+                *unsafe { &mut *uv.location } = value;
+            }
+            _ => panic!("expected upvalue"),
+        };
+        self.advance();
+    }
+
+    fn handle_closure(&mut self) {
+        let closure_func = match self.consume_next_byte_as_constant() {
+            SmallVal::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
+                ObjectValue::Closure(f) => f,
+                _ => panic!("expected function"),
+            },
+            _ => panic!("expected object ptr"),
+        };
+
+        // TODO remove clone ideally
+        let mut closure_func = closure_func.clone();
+
+        // upvalues is empty right now, fill it
+        // thought: might be nice to store "num upvalues" as an operand instead of preallocating
+        for i in 0..closure_func.num_upvalues {
+            let capture_type = self.consume_next_byte_as_byte().try_into().unwrap();
+            let upvalue_index = self.consume_next_byte_as_byte();
+            let uv_ptr = match capture_type {
+                SurroundingLocal => {
+                    let idx_in_stack = self.frame().stack_frame_start + 1 + upvalue_index as usize;
+
+                    let upvalue = UpValue {
+                        location: self.stack.at_mut(idx_in_stack).unwrap(),
+                    };
+
+                    let uv_ptr: *mut HeapObject =
+                        unsafe { self.allocate_value(ObjectValue::Upvalue(upvalue)) };
+
+                    uv_ptr
+                }
+                SurroundingUpvalue => {
+                    let uv_ptr = self.frame().closure.upvalues[upvalue_index as usize];
+                    uv_ptr
+                }
+            };
+            closure_func.upvalues[i] = uv_ptr;
+        }
+
+        let heap_closure =
+            unsafe { self.allocate_value(ObjectValue::Closure(closure_func.clone())) };
+
+        self.stack.push(SmallVal::ObjectPtr(heap_closure));
+        self.advance();
     }
 
     // the following are all in the wrong order oh well
@@ -448,7 +589,7 @@ impl VM {
         let return_val = self.stack.pop().expect("expected a return value");
 
         // pop the arguments and locals
-        for _ in 0..(frame.arity + frame.num_locals) {
+        for _ in 0..(frame.closure.f.arity + frame.closure.f.num_locals) {
             self.stack.pop();
         }
         // pop the function
@@ -468,12 +609,7 @@ impl VM {
     /// includes arguments
     /// [function, arg1, arg2, ... argN, local1, ...]
     fn local_var_mut(&mut self, n: u8) -> &mut SmallVal {
-        let current_callframe = self
-            .callframes
-            .last()
-            .expect("expected a call frame for a local variable");
-
-        let global_offset = current_callframe.stack_frame_start + n as usize;
+        let global_offset = self.frame().stack_frame_start + n as usize;
 
         self.stack.at_mut(global_offset).unwrap()
     }
@@ -483,7 +619,7 @@ impl VM {
         // [..., function, arg1, arg2, ... argN]
         // and the operand to be the arity of the function, so we can lookup the function and args
         let given_arity = self.consume_next_byte_as_byte() as usize;
-        // let callframe = self.callframes.last().unwrap();
+        // let callframe = self.frame();
 
         match self
             .stack
@@ -491,31 +627,29 @@ impl VM {
             .unwrap()
         {
             SmallVal::ObjectPtr(obj) => match &unsafe { &*obj }.value {
-                ObjectValue::Function(func_obj) => {
-                    if func_obj.arity != given_arity {
+                ObjectValue::Closure(func_obj) => {
+                    // ObjectValue::Function(func_obj) => {
+                    if func_obj.f.arity != given_arity {
                         self.runtime_error(
                             format!(
                                 "arity mismatch: Expected {} arguments, got {}",
-                                func_obj.arity, given_arity
+                                func_obj.f.arity, given_arity
                             )
                             .as_str(),
                         )
                     }
 
-                    self.callframes.push(self.make_callframe(func_obj));
+                    self.callframes.push(self.make_callframe(func_obj.clone()));
 
                     // set to the start of the function
-                    self.ip = func_obj.bytecode.code.as_ptr();
+                    self.ip = func_obj.f.bytecode.code.as_ptr();
 
                     // allocate space for the locals so they don't get overwritten
                     // args are already at the top of the stack
-                    self.stack.ptr += func_obj.num_locals as i32;
+                    self.stack.ptr += func_obj.f.num_locals as i32;
                 }
                 ObjectValue::Builtin(b) => {
-                    let args = self
-                        .stack
-                        .pop_n(given_arity)
-                        .unwrap();
+                    let args = self.stack.pop_n(given_arity).unwrap();
                     let result = (b.func)(&mut &args[..]);
                     self.stack.pop(); // pop off function too
                     self.stack.push(result);
@@ -527,19 +661,18 @@ impl VM {
         };
     }
 
-    fn make_callframe(&self, func_obj: &Function) -> CallFrame {
+    fn make_callframe(&self, closure: Closure) -> CallFrame {
+        let arity = closure.f.arity;
         CallFrame {
+            closure,
             return_address: self.ip,
             stack_frame_start: {
-                let ptr = self.stack.ptr - func_obj.arity as i32; // because the arugments are at the end of the stack
+                let ptr = self.stack.ptr - arity as i32; // because the arugments are at the end of the stack
                 if ptr < 0 {
                     panic!();
                 }
                 ptr as usize
             },
-            arity: func_obj.arity,
-            constants: func_obj.bytecode.constants.clone(),
-            num_locals: func_obj.num_locals,
         }
     }
 
@@ -739,7 +872,7 @@ impl VM {
 
     fn get_constant(&self, idx: usize) -> &ConstantValue {
         if let Some(frame) = &self.callframes.last() {
-            return &frame.constants[idx];
+            return &frame.closure.f.bytecode.constants[idx];
         };
 
         &self.chunk_constants[idx]
@@ -769,6 +902,9 @@ impl VM {
     }
 
     fn runtime_error(&self, message: &str) -> ! {
+        for frame in self.callframes.iter() {
+            println!("in {:?}", frame.closure.f.name);
+        }
         panic!("Runtime error: {}", message);
     }
 }
@@ -922,25 +1058,26 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Object(ConstantObject::Function(
-                    Function {
+                ConstantValue::Object(ConstantObject::Closure(Closure {
+                    f: Function {
                         num_locals: 0,
                         name: "asdf".to_string(),
                         arity: 2,
                         bytecode: Box::new(BytecodeChunk {
                             code: vec![
                                 Op::ReferenceLocal.into(),
-                                // make variables 1-indexed as the function itself is at 0 (maybe? (bad idea? (probably)))
-                                1, // load the first argument from back in the stack
+                                1,
                                 Op::ReferenceLocal.into(),
-                                2, // load the second argument from back in the stack
+                                2,
                                 Op::Add.into(),
                                 Op::Return.into(),
                             ],
                             constants: vec![],
                         }),
-                    }, // )
-                )),
+                    },
+                    upvalues: vec![],
+                    num_upvalues: 0,
+                })),
                 ConstantValue::Integer(20),
                 ConstantValue::Integer(30),
             ],
@@ -968,25 +1105,26 @@ mod tests {
                 Op::DebugEnd.into(),
             ],
             constants: vec![
-                ConstantValue::Object(ConstantObject::Function(
-                    Function {
+                ConstantValue::Object(ConstantObject::Closure(Closure {
+                    f: Function {
                         num_locals: 0,
                         name: "asdf".to_string(),
                         arity: 2,
                         bytecode: Box::new(BytecodeChunk {
                             code: vec![
                                 Op::ReferenceLocal.into(),
-                                // make variables 1-indexed as the function itself is at 0 (maybe? (bad idea? (probably)))
-                                1, // load the first argument from back in the stack
+                                1,
                                 Op::ReferenceLocal.into(),
-                                2, // load the second argument from back in the stack
+                                2,
                                 Op::Add.into(),
                                 Op::Return.into(),
                             ],
                             constants: vec![],
                         }),
-                    }, // )
-                )),
+                    },
+                    upvalues: vec![],
+                    num_upvalues: 0,
+                })),
                 ConstantValue::Integer(20),
                 ConstantValue::Integer(30),
             ],

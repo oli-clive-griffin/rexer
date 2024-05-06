@@ -1,7 +1,6 @@
-use crate::vm::ConstantObject;
+use crate::vm::{CaptureType, Closure, ConstantObject};
 use crate::{
-    lexer,
-    parser::{self, Ast},
+    lexer, parser,
     sexpr::SrcSexpr,
     structural_parser::structure_sexpr,
     vm::{BytecodeChunk, ConstantValue, Function, Op},
@@ -59,11 +58,13 @@ impl FunctionExpression {
     }
 }
 
-/// a value in the enclosing scope
-pub struct Upvalue {
-    is_local: bool,
-    /// local index in the enclosing scope
-    index: usize,
+#[derive(Debug, PartialEq)]
+pub enum UpvalueCapture {
+    Upvalue { i: usize },
+    Local { i: usize },
+    // capture_type: CaptureType,
+    // /// local index in the enclosing scope
+    // index: usize,
 }
 
 pub struct Compiler {
@@ -81,7 +82,7 @@ pub struct ChunkCompiler {
     code: Vec<u8>,
     constants: Vec<ConstantValue>,
     local_and_arg_tracker: Vec<String>,
-    upvalues: Vec<Upvalue>,
+    captured_upvalues: Vec<UpvalueCapture>,
 }
 
 impl ChunkCompiler {
@@ -90,7 +91,7 @@ impl ChunkCompiler {
             constants: vec![],
             local_and_arg_tracker: vec![],
             code: vec![],
-            upvalues: vec![],
+            captured_upvalues: vec![],
         }
     }
 }
@@ -102,6 +103,10 @@ impl Compiler {
 
     fn current(&self) -> &ChunkCompiler {
         self.chunks.last().unwrap()
+    }
+
+    fn code_push(self: &mut Self, op: u8) {
+        self.current_mut().code.push(op);
     }
 
     fn compile_expression<'b>(self: &mut Self, expression: Expression) {
@@ -125,8 +130,7 @@ impl Compiler {
             } => self.compile_if_statement(condition, else_, then),
             Expression::RegularForm(exprs) => self.compile_regular_form(exprs),
             Expression::FunctionLiteral(function_expr) => {
-                let f = self.compile_function(function_expr);
-                self.compile_const(ConstantValue::Object(ConstantObject::Function(f)));
+                self.compile_function(function_expr);
             }
             Expression::DeclareGlobal { name, value } => {
                 self.compile_global_declaration(name, value)
@@ -135,69 +139,91 @@ impl Compiler {
         }
     }
 
-    fn compile_function(self: &mut Self, function_expr: FunctionExpression) -> Function {
-        self.chunks.push(ChunkCompiler {
-            code: vec![],
-            constants: vec![],
-            local_and_arg_tracker: function_expr.parameters.clone(),
-            upvalues: vec![],
-        });
+    fn compile_function(self: &mut Self, function_expr: FunctionExpression) {
+        let ChunkCompiler {
+            code,
+            constants,
+            captured_upvalues,
+            local_and_arg_tracker,
+        } = {
+            self.chunks.push(ChunkCompiler {
+                code: vec![],
+                constants: vec![],
+                local_and_arg_tracker: function_expr.parameters.clone(),
+                captured_upvalues: vec![],
+            });
+            for expr in function_expr.body {
+                self.compile_expression(expr);
+            }
+            self.code_push(Op::Return.into());
+            self.chunks.pop().unwrap()
+        };
 
         let arity = function_expr.parameters.len();
 
-        for expr in function_expr.body {
-            self.compile_expression(expr);
+        let num_locals = local_and_arg_tracker.len() - arity;
+
+        let closure = Closure::new(
+            Function::new(
+                function_expr.name.unwrap_or("anonymous".to_string()),
+                arity,
+                num_locals as usize,
+                BytecodeChunk::new(code, constants),
+            ),
+            captured_upvalues.len(),
+        );
+        self.code_push(Op::Closure.into());
+        self.add_constant_and_push_idx(ConstantValue::Object(ConstantObject::Closure(closure)));
+        for upvalue in captured_upvalues {
+            match upvalue {
+                UpvalueCapture::Local { i } => {
+                    self.code_push(CaptureType::SurroundingLocal.into());
+                    self.code_push(i as u8);
+                }
+                UpvalueCapture::Upvalue { i } => {
+                    self.code_push(CaptureType::SurroundingUpvalue.into());
+                    self.code_push(i as u8);
+                }
+            }
         }
-
-        self.current_mut().code.push(Op::Return.into());
-        let num_locals = self.current().local_and_arg_tracker.len() - arity;
-
-        let comp = self.chunks.pop().unwrap();
-        Function::new(
-            function_expr.name.unwrap_or("anonymous".to_string()),
-            arity,
-            num_locals as usize,
-            BytecodeChunk::new(comp.code, comp.constants),
-        )
     }
 
     fn compile_local_definition(self: &mut Self, name: String, value: Box<Expression>) {
-        let legal = self
+        let redefining_local = self
             .current()
             .local_and_arg_tracker
             .iter()
             .all(|x| x != &name);
-        if !legal {
+        if !redefining_local {
             panic!("redefining local variable")
         };
         self.current_mut().local_and_arg_tracker.push(name.clone());
         self.compile_expression(*value);
-        self.current_mut().code.push(Op::Define.into());
+        self.code_push(Op::Define.into());
         let idx = self.current().local_and_arg_tracker.len();
-        self.current_mut().code.push(idx as u8);
+        self.code_push(idx as u8);
     }
 
     fn compile_symbol_as_reference(self: &mut Self, sym: String) {
         // evaulate as reference as opposed to value
         // local / function argument
         let chunk_idx = self.chunks.len() - 1;
-        let local_idx = self.resolve_local_pos(&sym, chunk_idx); // TODO asdf
+        let local_idx = self.resolve_local_pos(&sym, chunk_idx);
 
         if let Some(idx) = local_idx {
-            self.current_mut().code.push(Op::ReferenceLocal.into());
-            self.current_mut().code.push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
-        }
-        // else if let Some(_upvalue) = self.resolve_upvalue(&sym) {
-        //     panic!("this shouldn't be implemented yet")
-        // }
-        else {
+            self.code_push(Op::ReferenceLocal.into());
+            self.code_push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
+        } else if let Some(upvalue_idx) = self.resolve_upvalue(&sym) {
+            // relies on the fact that `self.resolve_upvalue` will populate the upvalue vec
+            self.code_push(Op::ReferenceUpvalue.into());
+            self.code_push(upvalue_idx as u8);
+        } else {
             // fall back to global
-            self.current_mut().code.push(Op::ReferenceGlobal.into());
+            self.code_push(Op::ReferenceGlobal.into());
             // this can be optimized by reusing the same constant for the same symbol
             // also - this is one of those wierd/cool cases where a language concept becomes a runtime concept: the symbol in the code is a runtime value
-            self.current_mut().constants.push(ConstantValue::Object(ConstantObject::String(sym)));
-            let idx = self.current().constants.len() as u8 - 1;
-            self.current_mut().code.push(idx);
+            // can abstract this?
+            self.add_constant_and_push_idx(ConstantValue::Object(ConstantObject::String(sym)));
         }
     }
 
@@ -214,18 +240,18 @@ impl Compiler {
         for expr in exprs {
             self.compile_expression(expr);
         }
-        self.current_mut().code.push(Op::FuncCall.into());
-        self.current_mut().code.push(arity);
+        self.code_push(Op::FuncCall.into());
+        self.code_push(arity);
     }
 
     fn compile_global_declaration(self: &mut Self, name: String, value: Box<Expression>) {
         self.compile_expression(*value);
-        self.current_mut().code.push(Op::DeclareGlobal.into());
+        self.code_push(Op::DeclareGlobal.into());
         self.current_mut()
             .constants
             .push(ConstantValue::Object(ConstantObject::String(name)));
         let idx = self.current().constants.len() as u8 - 1;
-        self.current_mut().code.push(idx);
+        self.code_push(idx);
     }
 
     fn compile_if_statement(
@@ -237,16 +263,16 @@ impl Compiler {
         // IF
         self.compile_expression(*condition);
         // skip to "then"
-        self.current_mut().code.push(Op::CondJump.into());
-        self.current_mut().code.push(0x00);
+        self.code_push(Op::CondJump.into());
+        self.code_push(0x00);
         // will mutate this later
         let then_jump_idx = self.current().code.len() - 1;
         // ELSE
         self.compile_expression(*else_);
         // skip to end
-        self.current_mut().code.push(Op::Jump.into());
+        self.code_push(Op::Jump.into());
         // self.current().code[to_then_jump_address as usize] = self.current().code.len() as u8;
-        self.current_mut().code.push(0x00);
+        self.code_push(0x00);
         // will mutate this later
         let finish_jump_idx = self.current().code.len() - 1;
         // THEN
@@ -257,41 +283,44 @@ impl Compiler {
         let finish_jump = (self.current().code.len() - finish_jump_idx) as u8;
         self.current_mut().code[finish_jump_idx] = finish_jump
     }
-    
-    fn compile_const(self: &mut Self, c: ConstantValue) {
+
+    fn compile_constant(self: &mut Self, c: ConstantValue) {
+        self.code_push(Op::Constant.into());
+        self.add_constant_and_push_idx(c);
+    }
+
+    fn add_constant_and_push_idx(self: &mut Self, c: ConstantValue) {
         self.current_mut().constants.push(c);
         let idx = self.current().constants.len() as u8 - 1;
-
-        self.current_mut().code.push(Op::Constant.into());
-        self.current_mut().code.push(idx);
+        self.code_push(idx);
     }
 
     fn compile_self_evaluation(self: &mut Self, sexpr: SrcSexpr, quote_level: usize) {
         match sexpr {
             SrcSexpr::Bool(x) => {
-                self.compile_const(ConstantValue::Boolean(x));
+                self.compile_constant(ConstantValue::Boolean(x));
             }
             SrcSexpr::Int(x) => {
-                self.compile_const(ConstantValue::Integer(x));
+                self.compile_constant(ConstantValue::Integer(x));
             }
             SrcSexpr::Float(x) => {
-                self.compile_const(ConstantValue::Float(x));
+                self.compile_constant(ConstantValue::Float(x));
             }
             SrcSexpr::String(x) => {
-                self.compile_const(ConstantValue::Object(ConstantObject::String(x)));
+                self.compile_constant(ConstantValue::Object(ConstantObject::String(x)));
             }
             SrcSexpr::Symbol(x) => {
-                self.compile_const(ConstantValue::Object(ConstantObject::Symbol(x)));
+                self.compile_constant(ConstantValue::Object(ConstantObject::Symbol(x)));
             }
             // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
             SrcSexpr::List(sexprs) => {
                 // nil for end of list
-                self.compile_const(ConstantValue::Nil);
+                self.compile_constant(ConstantValue::Nil);
 
                 // cons each element in reverse order
                 for sexpr in sexprs.into_iter().rev() {
                     self.compile_self_evaluation(sexpr, quote_level);
-                    self.current_mut().code.push(Op::Cons.into());
+                    self.code_push(Op::Cons.into());
                 }
             }
             SrcSexpr::Quote(quoted_sexpr) => {
@@ -300,7 +329,7 @@ impl Compiler {
                 // The first level of quoting is handled by the compiler, by compiling, for example, `'x` to the literal symbol `x`
                 // in the case of `''x`, the first quote is handled by the compiler, and the second quote is handled here:
                 if quote_level >= 2 {
-                    self.current_mut().code.push(Op::Quote.into());
+                    self.code_push(Op::Quote.into());
                 }
             }
         }
@@ -309,7 +338,7 @@ impl Compiler {
     fn resolve_upvalue(&mut self, sym: &str) -> Option<usize> {
         match self.chunks.len() {
             0 => panic!("no chunks"),
-            1 => return None,
+            1 => None,
             two_or_more => self.resolve_upvalue_rec(sym, two_or_more - 1), // start at the top
         }
     }
@@ -320,12 +349,13 @@ impl Compiler {
         }
 
         if let Some(local_index) = self.resolve_local_pos(sym, chunk_idx - 1) {
-            let upvalue_idx = self.add_upvalue(local_index, true, chunk_idx);
+            let upvalue_idx = self.add_upvalue(UpvalueCapture::Local { i: local_index }, chunk_idx);
             return Some(upvalue_idx);
         };
 
         if let Some(upvalue_index) = self.resolve_upvalue_rec(sym, chunk_idx - 1) {
-            let upvalue_idx = self.add_upvalue(upvalue_index, false, chunk_idx);
+            let upvalue_idx =
+                self.add_upvalue(UpvalueCapture::Upvalue { i: upvalue_index }, chunk_idx);
             return Some(upvalue_idx);
         };
 
@@ -341,10 +371,14 @@ impl Compiler {
             .position(|x| x == sym)
     }
 
-    fn add_upvalue(&mut self, index: usize, is_local: bool, compiler_index: usize) -> usize {
-        let compiler = self.chunks.get_mut(compiler_index).unwrap();
-        compiler.upvalues.push(Upvalue { index, is_local }); //  todo dedup
-        self.current().upvalues.len() - 1
+    fn add_upvalue(&mut self, uv: UpvalueCapture, chunk_index: usize) -> usize {
+        let compiler = self.chunks.get_mut(chunk_index).unwrap();
+        if let Some(upvalue_idx) = compiler.captured_upvalues.iter().position(|x| x == &uv) {
+            return upvalue_idx;
+        }
+
+        compiler.captured_upvalues.push(uv);
+        compiler.captured_upvalues.len() - 1
     }
 }
 
@@ -390,10 +424,7 @@ fn compile_expressions(expressions: Vec<Expression>) -> BytecodeChunk {
 mod tests {
     use std::vec;
 
-    use crate::{
-        static_stack::StaticStack,
-        vm::{SmallVal, VM},
-    };
+    use crate::vm::{SmallVal, VM};
 
     use super::*;
 
@@ -617,6 +648,7 @@ mod tests {
         assert_eq!(vm.stack.len(), 1);
         assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(205));
     }
+
     #[test]
     fn test_cons() {
         let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(

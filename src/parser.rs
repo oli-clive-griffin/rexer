@@ -70,59 +70,6 @@ pub fn parse_sexpr(rest_tokens: &[Token]) -> Result<(SrcSexpr, usize), String> {
                 )
             })
         }
-          //     Token::Parenthesis(LR::Left) => {
-          //         let (sexprs, i_diff) = parse_list(&rest_tokens[2..])?;
-          //         let list = SrcSexpr::Quote(Box::new(SrcSexpr::List(sexprs)));
-          //         Ok((list, i_diff + 2))
-          //     }
-          //     Token::Symbol(sym) => {
-          //         let sexpr = SrcSexpr::Quote(Box::new(SrcSexpr::Symbol(sym.clone())));
-          //         Ok((sexpr, 2))
-          //     }
-          //     Token::Literal(lit) => {
-          //         let sexpr = match lit {
-          //             Literal::Numeric(num) => match num {
-          //                 NumericLiteral::Int(i) => SrcSexpr::Quote(Box::new(SrcSexpr::Integer(*i))),
-          //                 NumericLiteral::Float(f) => SrcSexpr::Quote(Box::new(SrcSexpr::Float(*f))),
-          //             },
-          //             Literal::String(s) => SrcSexpr::Quote(Box::new(SrcSexpr::String(s.clone()))),
-          //             Literal::Boolean(b) => SrcSexpr::Quote(Box::new(SrcSexpr::Bool(*b))),
-          //         };
-          //         Ok((sexpr, 2))
-          //     }
-          //     Token::Comma => todo!(),
-          //     Token::Apostrophe => todo!(),
-          //     Token::Backtick => todo!(),
-
-          // }
-          // if let Token::Parenthesis(LR::Left) = next_token {
-          //     let (sexprs, i_diff) = parse_list(&rest_tokens[2..])?;
-          //     let list =  SrcSexpr::Quote(Box::new(SrcSexpr::List(sexprs)));
-          //     Ok((list, i_diff + 2))
-          // } else {
-          //     Err(format!(
-          //         "Unexpected token after backtick: '{:?}', expected '('",
-          //         next_token
-          //     ))
-          // }
-
-          // Token::Backtick | Token::Apostrophe => {
-          // let next_token = &rest_tokens[1];
-          // if let Token::Parenthesis(LR::Left) = next_token {
-          //     let (sexprs, i_diff) = parse_list(&rest_tokens[2..])?;
-          //     let list = match first {
-          //         Token::Backtick => SrcSexpr::DEP_QuasiQuotedList(sexprs),
-          //         Token::Apostrophe => SrcSexpr::Quote(Box::new(SrcSexpr::List(sexprs))),
-          //         _ => unreachable!(),
-          //     };
-          //     Ok((list, i_diff + 2))
-          // } else {
-          //     Err(format!(
-          //         "Unexpected token after backtick: '{:?}', expected '('",
-          //         next_token
-          //     ))
-          // }
-          // }
     }
 }
 

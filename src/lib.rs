@@ -1,6 +1,6 @@
 mod builtins;
 pub mod compiler;
-mod disassembler;
+pub mod disassembler;
 mod evaluator;
 pub mod interpreter;
 mod lexer;

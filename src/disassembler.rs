@@ -16,7 +16,6 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::Constant => {
                 pc += 1;
                 let idx = bc.code[pc];
-                // format!("Constant idx: {idx} val: {:?}", bc.constants[idx as usize])
                 format!("Constant\n  val: {:?}", bc.constants[idx as usize])
             }
             Op::Jump => {
@@ -77,6 +76,32 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::LTE => "LTE".to_string(),
             Op::Print => "PRINT".to_string(),
             Op::Quote => "QUOTE".to_string(),
+            Op::ReferenceUpvalue => unimplemented!(),
+            Op::SetUpvalue => unimplemented!(),
+            Op::Closure => {
+                let mut s = "CLOSURE\n".to_string();
+                pc += 1;
+                let idx = bc.code[pc];
+                let closure = match &bc.constants[idx as usize] {
+                    ConstantValue::Object(o) => match o {
+                        ConstantObject::Closure(c) => c,
+                        got => panic!("expected function for closure, got {:?}", got),
+                    },
+                    got => panic!("expected object for closure, got {:?}", got),
+                };
+                let num_uv = closure.num_upvalues;
+                for i in 0..num_uv {
+                    pc += 1;
+                    let is_local = bc.code[pc];
+                    pc += 1;
+                    let idx = bc.code[pc];
+                    s.push_str(
+                        format!("  upvalue: {i} is_local: {is_local} idx: {idx}\n").as_str(),
+                    );
+                }
+
+                s
+            }
         };
         lines.push_str(line.as_str());
         lines.push('\n');

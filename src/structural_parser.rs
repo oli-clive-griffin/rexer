@@ -5,7 +5,9 @@ use crate::{
 
 pub fn structure_sexpr(sexpr: &SrcSexpr, in_function: bool) -> Expression {
     match sexpr {
-        // SrcSexpr::Symbol(_) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())), // TODO this might be better as Expression::Ref
+        // SrcSexpr::Symbol(_) => Expression::SrcSexpr(SrcSexpr::Symbol(a.clone())),
+        // NOTE: might be better as Expression::Ref
+        // that would seperate the concept of a reference from a symbol nicely
         SrcSexpr::List(sexprs) => {
             if let Some(special_form) = map_to_special_form(sexprs, in_function) {
                 return special_form;
