@@ -2,7 +2,7 @@ use crate::vm::{CaptureType, Closure, ConstantObject};
 use crate::{
     lexer, parser,
     sexpr::SrcSexpr,
-    structural_parser::structure_sexpr,
+    structural_parser::structure_ast,
     vm::{BytecodeChunk, ConstantValue, Function, Op},
 };
 
@@ -39,13 +39,14 @@ pub enum Expression {
     // Don't need to support for now
     // /// the value of `nil`
     // NilLit,
+    Discard(Box<Expression>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionExpression {
-    parameters: Vec<String>,
-    body: Vec<Expression>,
-    name: Option<String>,
+    pub parameters: Vec<String>,
+    pub body: Vec<Expression>,
+    pub name: Option<String>,
 }
 
 impl FunctionExpression {
@@ -78,10 +79,25 @@ impl Compiler {
     }
 }
 
+struct Local {
+    name: String,
+    captured: bool,
+}
+
+impl Local {
+    fn new(name: String) -> Self {
+        Local {
+            name,
+            captured: false,
+        }
+    }
+}
+
 pub struct ChunkCompiler {
     code: Vec<u8>,
     constants: Vec<ConstantValue>,
-    local_and_arg_tracker: Vec<String>,
+    args: Vec<Local>,
+    locals: Vec<Local>,
     captured_upvalues: Vec<UpvalueCapture>,
 }
 
@@ -89,7 +105,8 @@ impl ChunkCompiler {
     pub fn new() -> Self {
         ChunkCompiler {
             constants: vec![],
-            local_and_arg_tracker: vec![],
+            args: vec![],
+            locals: vec![],
             code: vec![],
             captured_upvalues: vec![],
         }
@@ -136,6 +153,17 @@ impl Compiler {
                 self.compile_global_declaration(name, value)
             }
             Expression::LocalDefine { name, value } => self.compile_local_definition(name, value),
+            Expression::Discard(expr) => {
+                match *expr {
+                    Expression::LocalDefine { name: _, value: _ }
+                    | Expression::DeclareGlobal { name: _, value: _ }
+                    | Expression::Discard(_) => panic!("should not be discarding this expr: {:?}", expr),
+                    _ => {},
+                };
+                
+                self.compile_expression(*expr);
+                self.code_push(Op::Pop.into());
+            }
         }
     }
 
@@ -144,12 +172,18 @@ impl Compiler {
             code,
             constants,
             captured_upvalues,
-            local_and_arg_tracker,
+            args,
+            locals,
         } = {
             self.chunks.push(ChunkCompiler {
                 code: vec![],
                 constants: vec![],
-                local_and_arg_tracker: function_expr.parameters.clone(),
+                args: function_expr
+                    .parameters
+                    .iter()
+                    .map(|name| Local::new(name.clone()))
+                    .collect(),
+                locals: vec![],
                 captured_upvalues: vec![],
             });
             for expr in function_expr.body {
@@ -159,15 +193,11 @@ impl Compiler {
             self.chunks.pop().unwrap()
         };
 
-        let arity = function_expr.parameters.len();
-
-        let num_locals = local_and_arg_tracker.len() - arity;
-
         let closure = Closure::new(
             Function::new(
                 function_expr.name.unwrap_or("anonymous".to_string()),
-                arity,
-                num_locals as usize,
+                args.len(),
+                locals.len(),
                 BytecodeChunk::new(code, constants),
             ),
             captured_upvalues.len(),
@@ -191,16 +221,17 @@ impl Compiler {
     fn compile_local_definition(self: &mut Self, name: String, value: Box<Expression>) {
         let redefining_local = self
             .current()
-            .local_and_arg_tracker
+            .args
             .iter()
-            .all(|x| x != &name);
+            .chain(self.current().locals.iter())
+            .all(|x| x.name != name);
         if !redefining_local {
             panic!("redefining local variable")
         };
-        self.current_mut().local_and_arg_tracker.push(name.clone());
+        self.current_mut().locals.push(Local::new(name.clone()));
         self.compile_expression(*value);
         self.code_push(Op::Define.into());
-        let idx = self.current().local_and_arg_tracker.len();
+        let idx = self.current().args.len() + self.current().locals.len();
         self.code_push(idx as u8);
     }
 
@@ -212,7 +243,7 @@ impl Compiler {
 
         if let Some(idx) = local_idx {
             self.code_push(Op::ReferenceLocal.into());
-            self.code_push((idx + 1) as u8); // plus 1 because local_and_arg_tracker are 1-indexed
+            self.code_push((idx + 1) as u8);
         } else if let Some(upvalue_idx) = self.resolve_upvalue(&sym) {
             // relies on the fact that `self.resolve_upvalue` will populate the upvalue vec
             self.code_push(Op::ReferenceUpvalue.into());
@@ -363,12 +394,12 @@ impl Compiler {
     }
 
     fn resolve_local_pos(&self, sym: &str, chunk_idx: usize) -> Option<usize> {
-        self.chunks
-            .get(chunk_idx)
-            .unwrap()
-            .local_and_arg_tracker
+        let compiler = self.chunks.get(chunk_idx).unwrap();
+        return compiler
+            .args
             .iter()
-            .position(|x| x == sym)
+            .chain(compiler.locals.iter())
+            .position(|x| x.name == sym);
     }
 
     fn add_upvalue(&mut self, uv: UpvalueCapture, chunk_index: usize) -> usize {
@@ -393,11 +424,7 @@ pub fn compile(src: &String) -> BytecodeChunk {
     });
     // println!("{:#?}", ast);
 
-    let expressions = ast
-        .expressions
-        .iter()
-        .map(|s| structure_sexpr(s, false)) // top-level isn't in a function
-        .collect::<Vec<Expression>>();
+    let expressions = structure_ast(ast);
     // println!("{:#?}", expressions);
 
     compile_expressions(expressions)

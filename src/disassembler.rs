@@ -13,6 +13,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::Return => "Return".to_string(),
             Op::Cons => "Cons".to_string(),
             Op::DebugEnd => "DebugEnd".to_string(),
+            Op::Pop => "pop".to_string(),
             Op::Constant => {
                 pc += 1;
                 let idx = bc.code[pc];

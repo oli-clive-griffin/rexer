@@ -227,6 +227,35 @@ fn target_spec_15() {
     );
 }
 
+#[test]
+fn asdfasdfasdf() {
+    run_code("(print 1)");
+}
+
+#[test]
+fn playground() {
+    run_code(
+        r#"
+(defun (f)
+    "returned from f")
+(f)
+
+(defun (g a)
+    "returned from g")
+(g "asdf")
+
+(defun (h)
+    (define x 10)
+    "returned from h")
+(h)
+
+(defun (i a)
+    (define x 10)
+    "returned from i")
+(i "asdf")
+"#
+    )
+}
 
 // #[test]
 // fn target_spec() {

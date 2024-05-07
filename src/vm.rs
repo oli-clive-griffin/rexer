@@ -18,7 +18,7 @@ use CaptureType::*;
 
 const STACK_SIZE: usize = 4096; // will need to dial this in
 pub struct VM {
-    pub stack: StaticStack<SmallVal, STACK_SIZE>, // for testing ugh
+    pub stack: StaticStack<SmallVal, STACK_SIZE>, // pub for testing, ugh
     pub globals: HashMap<String, SmallVal>,       // same, need to make interface nicer
     ip: *const u8,
     callframes: Vec<CallFrame>,
@@ -241,7 +241,8 @@ struct CallFrame {
     // constants: Vec<ConstantValue>,
     // num_locals: usize,
     return_address: *const u8,
-    stack_frame_start: usize,
+    /// the stack index of the function being called
+    stack_frame_start: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -345,6 +346,7 @@ pub enum Op {
     ReferenceUpvalue = 21,
     SetUpvalue = 22,
     Closure = 23,
+    Pop = 24,
     DebugEnd = 254,
 }
 
@@ -397,9 +399,11 @@ fn builtins() -> Vec<Closure> {
                         Op::ReferenceLocal.into(),
                         1,
                         Op::Print.into(),
+                        Op::Constant.into(),
+                        0, // return nil
                         Op::Return.into(),
                     ],
-                    constants: vec![],
+                    constants: vec![ConstantValue::Nil],
                 }),
             },
             upvalues: vec![],
@@ -469,10 +473,16 @@ impl VM {
                 Op::Closure => self.handle_closure(),
                 Op::ReferenceUpvalue => self.handle_reference_upvalue(),
                 Op::SetUpvalue => self.handle_set_upvalue(),
+                Op::Pop => self.handle_pop(),
             }
         }
     }
 
+    fn handle_pop(&mut self) {
+        self.stack.pop().expect("expected value to pop");
+        self.advance();
+    }
+    
     fn handle_reference_upvalue(&mut self) {
         let idx = self.consume_next_byte_as_byte() as usize;
         let ptr = self.frame().closure.upvalues[idx];
@@ -516,7 +526,8 @@ impl VM {
             let upvalue_index = self.consume_next_byte_as_byte();
             let uv_ptr = match capture_type {
                 SurroundingLocal => {
-                    let idx_in_stack = self.frame().stack_frame_start + 1 + upvalue_index as usize;
+                    let idx_in_stack =
+                        (self.frame().stack_frame_start + 1 + upvalue_index as i32) as usize; // +1 to skip the function
 
                     let upvalue = UpValue {
                         location: self.stack.at_mut(idx_in_stack).unwrap(),
@@ -578,22 +589,23 @@ impl VM {
     }
 
     fn handle_return(&mut self) {
-        let frame = self
+        let CallFrame {
+            closure,
+            return_address,
+            stack_frame_start,
+        } = self
             .callframes
             .pop()
             .expect("expected a call frame to return from");
 
-        self.ip = frame.return_address;
+        self.ip = return_address;
 
         // clean up the stack
         let return_val = self.stack.pop().expect("expected a return value");
 
-        // pop the arguments and locals
-        for _ in 0..(frame.closure.f.arity + frame.closure.f.num_locals) {
-            self.stack.pop();
-        }
-        // pop the function
-        self.stack.pop();
+        // pop the arguments, locals, and function
+        self.stack.pop_n(closure.f.arity + closure.f.num_locals + 1);
+        assert_eq!(self.stack.ptr + 1, stack_frame_start);
 
         self.stack.push(return_val);
         self.advance();
@@ -606,10 +618,10 @@ impl VM {
         self.advance();
     }
 
-    /// includes arguments
+    /// includes function and arguments
     /// [function, arg1, arg2, ... argN, local1, ...]
     fn local_var_mut(&mut self, n: u8) -> &mut SmallVal {
-        let global_offset = self.frame().stack_frame_start + n as usize;
+        let global_offset = (self.frame().stack_frame_start + n as i32) as usize;
 
         self.stack.at_mut(global_offset).unwrap()
     }
@@ -663,16 +675,24 @@ impl VM {
 
     fn make_callframe(&self, closure: Closure) -> CallFrame {
         let arity = closure.f.arity;
+        let stack_frame_start = self.stack.ptr - arity as i32;
+        // println!(
+        //     "at stack_frame_start: {:?}",
+        //     match self.stack.at(stack_frame_start as usize).unwrap() {
+        //         SmallVal::ObjectPtr(o) => match &unsafe { &**o }.value {
+        //             ObjectValue::Closure(c) => &c.f.name,
+        //             _ => panic!("expected closure"),
+        //         },
+        //         _ => panic!("expected object ptr"),
+        //     }
+        // );
+        if stack_frame_start < 0 {
+            panic!("stack underflow");
+        }
         CallFrame {
             closure,
             return_address: self.ip,
-            stack_frame_start: {
-                let ptr = self.stack.ptr - arity as i32; // because the arugments are at the end of the stack
-                if ptr < 0 {
-                    panic!();
-                }
-                ptr as usize
-            },
+            stack_frame_start,
         }
     }
 
