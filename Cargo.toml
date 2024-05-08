@@ -1,3 +1,6 @@
+[features]
+gc_debug = []
+
 [package]
 name = "rusp"
 version = "0.1.0"

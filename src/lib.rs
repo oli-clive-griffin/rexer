@@ -5,6 +5,7 @@ pub mod disassembler;
 mod evaluator;
 pub mod interpreter;
 mod lexer;
+mod memory;
 mod parser;
 mod sexpr;
 mod static_stack;

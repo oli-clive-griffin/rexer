@@ -167,6 +167,7 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapObject {
     next: *mut HeapObject,
+    // pub value: *mut ObjectValue,
     pub value: ObjectValue,
     // marked: bool,
 }
@@ -357,6 +358,11 @@ impl VM {
         }
 
         vm
+    }
+
+    fn gc(&mut self) {
+        #[cfg(feature = "gc_debug")]
+        println!("gc running");
     }
 
     fn frame(&self) -> &CallFrame {
@@ -868,6 +874,7 @@ impl VM {
                         ConstantObject::Closure(c) => ObjectValue::Closure(c),
                     })
                 };
+                println!("allocated ptr to {}", &unsafe { &*obj_ptr });
                 SmallVal::ObjectPtr(obj_ptr)
             }
             ConstantValue::List(list) => self.allocate_list(list),
@@ -905,10 +912,10 @@ impl VM {
         SmallVal::ObjectPtr(cons_cell_ptr)
     }
 
-    fn val_to_obj(&mut self, last_val: SmallVal) -> *mut HeapObject {
-        match last_val {
+    fn val_to_obj(&mut self, val: SmallVal) -> *mut HeapObject {
+        match val {
             SmallVal::Integer(_) | SmallVal::Float(_) | SmallVal::Bool(_) | SmallVal::Nil => unsafe {
-                self.allocate_value(ObjectValue::SmallValue(last_val))
+                self.allocate_value(ObjectValue::SmallValue(val))
             },
             SmallVal::ObjectPtr(ptr) => ptr,
             SmallVal::Quote(ptr) => ptr,
@@ -929,12 +936,46 @@ impl VM {
     }
 
     pub unsafe fn allocate_value(&mut self, obj_value: ObjectValue) -> *mut HeapObject {
+        self.gc();
+
+        // manually allocate the value on the heap
+        // let obj_val_ptr = Box::into_raw(Box::new(obj_value.clone())); // todo remove
+        // match obj_value {
+        //     ObjectValue::SmallValue(sv) => match sv {
+        //         SmallVal::Integer(_) => todo!(),
+        //         SmallVal::Float(_) => todo!(),
+        //         SmallVal::Bool(_) => todo!(),
+        //         SmallVal::Nil => todo!(),
+        //         SmallVal::ObjectPtr(_) => todo!(),
+        //         SmallVal::Quote(_) => todo!(),
+        //     },
+        //     ObjectValue::String(s) => todo!(),
+        //     ObjectValue::Closure(closure) => todo!(),
+        //     ObjectValue::Symbol(s) => todo!(),
+        //     ObjectValue::ConsCell(ConsCell(a, b)) => todo!(),
+        //     ObjectValue::BuiltIn(bi) => todo!(),
+        //     ObjectValue::UpValue(uv) => todo!(),
+        // }
+
+        // #[cfg(feature = "gc_debug")]
+        // println!(
+        //     "allocating ptr to {}, bytes: {}",
+        //     &*obj_val_ptr,
+        //     std::mem::size_of_val(&obj_value)
+        // );
+
         let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
-        obj_ptr.write(HeapObject {
+
+        let obj = HeapObject {
             next: self.heap,
+            // value: obj_val_ptr,
             value: obj_value,
-        });
+        };
+
+        obj_ptr.write(obj);
+
         self.heap = obj_ptr;
+
         obj_ptr
     }
 
