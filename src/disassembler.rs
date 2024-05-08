@@ -11,7 +11,6 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::Mul => "Mul".to_string(),
             Op::Div => "Div".to_string(),
             Op::Return => "Return".to_string(),
-            Op::Cons => "Cons".to_string(),
             Op::DebugEnd => "DebugEnd".to_string(),
             Op::Pop => "pop".to_string(),
             Op::Constant => {
@@ -103,6 +102,8 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
 
                 s
             }
+            Op::CloseUpvalue => "CLOSE_UPVALUE".to_string(),
+            Op::SetLocal => todo!(),
         };
         lines.push_str(line.as_str());
         lines.push('\n');

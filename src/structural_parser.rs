@@ -92,6 +92,24 @@ fn map_to_special_form(
                     Expression::DeclareGlobal { name, value }
                 });
             }
+            "set" => {
+                if rest.len() != 2 {
+                    panic!("define expects 2 arguments, got {:?}", rest)
+                }
+
+                let name = match &rest[0] {
+                    SrcSexpr::Symbol(s) => s.clone(),
+                    _ => panic!("define expects symbol as first argument"),
+                };
+
+                let value = Box::new(structure_sexpr(&rest[1], in_function, false));
+
+                if !in_function {
+                    panic!("set! is only allowed in function bodies")
+                }
+
+                return Some(Expression::LocalSet { name, value });
+            }
             "defun" => {
                 let (signature, body_sexprs) = rest.split_first().unwrap();
 

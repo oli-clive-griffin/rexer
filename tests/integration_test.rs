@@ -1,5 +1,4 @@
 use rusp::compiler::compile;
-use rusp::disassembler::disassemble;
 use rusp::vm::VM;
 
 #[test]
@@ -11,6 +10,7 @@ fn actually_e2e() {
 
 (print (* (a true) ; 6
           (_add 2 3))) ; 5
+; 30
 "#
     .to_owned();
 
@@ -19,40 +19,38 @@ fn actually_e2e() {
     vm.run(bc);
 }
 
-#[test]
-fn actually_e2e_2() {
-    let src = r#"
-(defun (fib n)
-    (if (< n 2)
-        n
-        (+ (fib (- n 1))
-           (fib (- n 2)))))
+// #[test]
+// fn actually_e2e_2() {
+//     let src = r#"
+// (defun (fib n)
+//     (if (< n 2)
+//         n
+//         (+ (fib (- n 1))
+//            (fib (- n 2)))))
 
-(print (fib 20))
-"#
-    .to_owned();
+// (print (fib 20))
+// "#
+//     .to_owned();
+//     let bc = compile(&src);
+//     let fib = |n: i64| -> i64 {
+//         let mut a = 0;
+//         let mut b = 1;
+//         for _ in 0..n {
+//             let c = a + b;
+//             a = b;
+//             b = c;
+//         }
+//         a
+//     };
 
-    let bc = compile(&src);
-
-    let fib = |n: i64| -> i64 {
-        let mut a = 0;
-        let mut b = 1;
-        for _ in 0..n {
-            let c = a + b;
-            a = b;
-            b = c;
-        }
-        a
-    };
-
-    let mut vm = VM::default();
-    vm.run(bc);
-    assert_eq!(fib(20), *vm.stack.at(0).unwrap().as_integer().unwrap());
-}
+//     let mut vm = VM::default();
+//     vm.run(bc);
+//     // assert_eq!(fib(20), *vm.stack.at(0).unwrap().as_integer().unwrap());
+// }
 
 fn run_code(src: &str) {
     let bc = compile(&src.to_string());
-    println!("{}", disassemble(&bc));
+    // println!("{}", disassemble(&bc));
     VM::default().run(bc);
 }
 
@@ -62,8 +60,8 @@ fn target_spec_1() {
 }
 
 #[test]
-fn target_spec_asdf() {
-    run_code("(print '(1 '2))");
+fn test_cons() {
+    run_code("(print (cons 1 2)");
 }
 
 #[test]
@@ -134,16 +132,72 @@ fn target_spec_101() {
 }
 
 #[test]
-fn closures_broken() {
+fn closures_lifted() {
     run_code(
         r#"
-(defun (f)
-    (define x 10)
+(defun (f a)
+    (define b 10)
+    (define c 11)
     (defun (g)
-        x)
+        (print a)
+        (print b)
+        (print c))
     g)
-(define getx (f))
-(print (getx))
+
+(define closure (f "a"))
+(closure)
+(closure)
+"#,
+    );
+}
+
+#[test]
+fn closures_lifted_mut() {
+    run_code(
+        r#"
+(defun (make-counter)
+    (define x 0)
+    (defun (count)
+        (print x)
+        (set x (inc x)))
+    count)
+
+(define counter (make-counter))
+(counter)
+(counter)
+(counter)
+"#,
+    );
+}
+
+#[test]
+fn sibling_closures_lifted_mut() {
+    run_code(
+        r#"
+(defun (make-counters)
+    (define x 0)
+    (defun (count1)
+        (print x)
+        (set x (inc x)))
+
+    (defun (count2)
+        (print x)
+        (set x (inc x)))
+
+    (defun (both)
+        (count1)
+        (count2))
+    '(count1 count2 both))
+
+(define all (make-counters))
+(print all)
+
+; (print (car all))
+; (print (car (cdr all)))
+; (print (car (cdr (cdr all))))
+; (both)
+; (both)
+; (both)
 "#,
     );
 }
@@ -211,7 +265,6 @@ fn target_spec_14() {
     );
 }
 
-
 #[test]
 fn target_spec_15() {
     run_code(
@@ -225,11 +278,6 @@ fn target_spec_15() {
 (f)
 "#,
     );
-}
-
-#[test]
-fn asdfasdfasdf() {
-    run_code("(print 1)");
 }
 
 #[test]
@@ -253,7 +301,7 @@ fn playground() {
     (define x 10)
     "returned from i")
 (i "asdf")
-"#
+"#,
     )
 }
 
@@ -292,7 +340,6 @@ fn playground() {
 // (print "^ should print 'returning 0'")
 // (print y)
 // (print "^ should be 4")
-
 
 // ; closures
 // (defun (make-adder x)

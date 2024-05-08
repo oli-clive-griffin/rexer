@@ -1,4 +1,5 @@
 mod builtins;
+mod builtins_comp;
 pub mod compiler;
 pub mod disassembler;
 mod evaluator;

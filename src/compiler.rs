@@ -27,6 +27,12 @@ pub enum Expression {
         value: Box<Expression>,
     },
 
+    /// (set name value)
+    LocalSet {
+        name: String,
+        value: Box<Expression>,
+    },
+
     /// (define name value)
     DeclareGlobal {
         name: String,
@@ -59,6 +65,20 @@ impl FunctionExpression {
     }
 }
 
+impl Into<ConstantValue> for SrcSexpr {
+    fn into(self) -> ConstantValue {
+        match self {
+            SrcSexpr::Bool(x) => ConstantValue::Boolean(x),
+            SrcSexpr::Int(x) => ConstantValue::Integer(x),
+            SrcSexpr::Float(x) => ConstantValue::Float(x),
+            SrcSexpr::String(x) => ConstantValue::Object(ConstantObject::String(x)),
+            SrcSexpr::Symbol(x) => ConstantValue::Object(ConstantObject::Symbol(x)),
+            SrcSexpr::List(l) => ConstantValue::List(l.into_iter().map(Into::into).collect()),
+            SrcSexpr::Quote(x) => ConstantValue::Quote(Box::new((*x).into())),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum UpvalueCapture {
     Upvalue { i: usize },
@@ -79,16 +99,17 @@ impl Compiler {
     }
 }
 
+#[derive(Debug)]
 struct Local {
     name: String,
-    captured: bool,
+    // captured: bool,
 }
 
 impl Local {
     fn new(name: String) -> Self {
         Local {
             name,
-            captured: false,
+            // captured: false,
         }
     }
 }
@@ -122,11 +143,11 @@ impl Compiler {
         self.chunks.last().unwrap()
     }
 
-    fn code_push(self: &mut Self, op: u8) {
+    fn code_push(&mut self, op: u8) {
         self.current_mut().code.push(op);
     }
 
-    fn compile_expression<'b>(self: &mut Self, expression: Expression) {
+    fn compile_expression(&mut self, expression: Expression) {
         match expression {
             Expression::SrcSexpr(sexpr) => match sexpr {
                 SrcSexpr::Symbol(sym) => {
@@ -157,17 +178,37 @@ impl Compiler {
                 match *expr {
                     Expression::LocalDefine { name: _, value: _ }
                     | Expression::DeclareGlobal { name: _, value: _ }
-                    | Expression::Discard(_) => panic!("should not be discarding this expr: {:?}", expr),
-                    _ => {},
+                    | Expression::Discard(_) => {
+                        panic!("should not be discarding this expr: {:?}", expr)
+                    }
+                    _ => {}
                 };
-                
+
                 self.compile_expression(*expr);
                 self.code_push(Op::Pop.into());
+            }
+            Expression::LocalSet { name, value } => {
+                self.compile_local_set(name, value);
             }
         }
     }
 
-    fn compile_function(self: &mut Self, function_expr: FunctionExpression) {
+    fn compile_local_set(&mut self, sym: String, value: Box<Expression>) {
+        self.compile_expression(*value);
+
+        if let Some(idx) = self.resolve_local_pos(&sym, self.chunks.len() - 1) {
+            self.code_push(Op::SetLocal.into());
+            self.code_push((idx + 1) as u8);
+        } else if let Some(upvalue_idx) = self.resolve_upvalue(&sym) {
+            // relies on the fact that `self.resolve_upvalue` will populate the upvalue vec
+            self.code_push(Op::SetUpvalue.into());
+            self.code_push(upvalue_idx as u8);
+        } else {
+            panic!("can't set global yet")
+        }
+    }
+
+    fn compile_function(&mut self, function_expr: FunctionExpression) {
         let ChunkCompiler {
             code,
             constants,
@@ -218,7 +259,7 @@ impl Compiler {
         }
     }
 
-    fn compile_local_definition(self: &mut Self, name: String, value: Box<Expression>) {
+    fn compile_local_definition(&mut self, name: String, value: Box<Expression>) {
         let redefining_local = self
             .current()
             .args
@@ -235,7 +276,7 @@ impl Compiler {
         self.code_push(idx as u8);
     }
 
-    fn compile_symbol_as_reference(self: &mut Self, sym: String) {
+    fn compile_symbol_as_reference(&mut self, sym: String) {
         // evaulate as reference as opposed to value
         // local / function argument
         let chunk_idx = self.chunks.len() - 1;
@@ -258,7 +299,7 @@ impl Compiler {
         }
     }
 
-    fn compile_regular_form(self: &mut Self, exprs: Vec<Expression>) {
+    fn compile_regular_form(&mut self, exprs: Vec<Expression>) {
         // We don't know the arity of the function at compile-time so we
         // defensively put the number of arguments to check at runtime
         let arity = {
@@ -275,7 +316,7 @@ impl Compiler {
         self.code_push(arity);
     }
 
-    fn compile_global_declaration(self: &mut Self, name: String, value: Box<Expression>) {
+    fn compile_global_declaration(&mut self, name: String, value: Box<Expression>) {
         self.compile_expression(*value);
         self.code_push(Op::DeclareGlobal.into());
         self.current_mut()
@@ -286,7 +327,7 @@ impl Compiler {
     }
 
     fn compile_if_statement(
-        self: &mut Self,
+        &mut self,
         condition: Box<Expression>,
         else_: Box<Expression>,
         then: Box<Expression>,
@@ -315,18 +356,18 @@ impl Compiler {
         self.current_mut().code[finish_jump_idx] = finish_jump
     }
 
-    fn compile_constant(self: &mut Self, c: ConstantValue) {
+    fn compile_constant(&mut self, c: ConstantValue) {
         self.code_push(Op::Constant.into());
         self.add_constant_and_push_idx(c);
     }
 
-    fn add_constant_and_push_idx(self: &mut Self, c: ConstantValue) {
+    fn add_constant_and_push_idx(&mut self, c: ConstantValue) {
         self.current_mut().constants.push(c);
         let idx = self.current().constants.len() as u8 - 1;
         self.code_push(idx);
     }
 
-    fn compile_self_evaluation(self: &mut Self, sexpr: SrcSexpr, quote_level: usize) {
+    fn compile_self_evaluation(&mut self, sexpr: SrcSexpr, quote_level: usize) {
         match sexpr {
             SrcSexpr::Bool(x) => {
                 self.compile_constant(ConstantValue::Boolean(x));
@@ -345,14 +386,9 @@ impl Compiler {
             }
             // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
             SrcSexpr::List(sexprs) => {
-                // nil for end of list
-                self.compile_constant(ConstantValue::Nil);
+                let const_sexprs = sexprs.into_iter().map(Into::into).collect();
 
-                // cons each element in reverse order
-                for sexpr in sexprs.into_iter().rev() {
-                    self.compile_self_evaluation(sexpr, quote_level);
-                    self.code_push(Op::Cons.into());
-                }
+                self.compile_constant(ConstantValue::List(const_sexprs))
             }
             SrcSexpr::Quote(quoted_sexpr) => {
                 self.compile_self_evaluation(*quoted_sexpr, quote_level + 1);
@@ -380,6 +416,8 @@ impl Compiler {
         }
 
         if let Some(local_index) = self.resolve_local_pos(sym, chunk_idx - 1) {
+            // mark the local as captured
+            // self.chunks.get_mut(chunk_idx - 1).unwrap().locals[local_index].captured = true;
             let upvalue_idx = self.add_upvalue(UpvalueCapture::Local { i: local_index }, chunk_idx);
             return Some(upvalue_idx);
         };
@@ -674,87 +712,5 @@ mod tests {
         vm.run(bc);
         assert_eq!(vm.stack.len(), 1);
         assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(205));
-    }
-
-    #[test]
-    fn test_cons() {
-        let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-            SrcSexpr::List(vec![SrcSexpr::Int(1), SrcSexpr::Int(2), SrcSexpr::Int(3)]),
-        )))]);
-
-        assert_eq!(
-            bc.constants,
-            vec![
-                ConstantValue::Nil,
-                ConstantValue::Integer(3),
-                ConstantValue::Integer(2),
-                ConstantValue::Integer(1),
-            ]
-        );
-
-        assert_eq!(
-            bc.code,
-            vec![
-                Op::Constant.into(),
-                0, // load nil
-                Op::Constant.into(),
-                1, // load 3
-                Op::Cons.into(),
-                Op::Constant.into(),
-                2, // load 2
-                Op::Cons.into(),
-                Op::Constant.into(),
-                3, // load 1
-                Op::Cons.into(),
-                Op::DebugEnd.into(),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_cons_nested() {
-        let bc = compile_expressions(vec![Expression::SrcSexpr(SrcSexpr::Quote(Box::new(
-            SrcSexpr::List(vec![
-                SrcSexpr::Int(10),
-                SrcSexpr::List(vec![SrcSexpr::Int(20), SrcSexpr::Int(30)]),
-                SrcSexpr::Int(40),
-            ]),
-        )))]);
-
-        assert_eq!(
-            bc.constants,
-            vec![
-                ConstantValue::Nil,
-                ConstantValue::Integer(40),
-                ConstantValue::Nil,
-                ConstantValue::Integer(30),
-                ConstantValue::Integer(20),
-                ConstantValue::Integer(10),
-            ]
-        );
-
-        assert_eq!(
-            bc.code,
-            vec![
-                Op::Constant.into(),
-                0, // load nil
-                Op::Constant.into(),
-                1, // load 4
-                Op::Cons.into(),
-                Op::Constant.into(),
-                2, // load nil
-                Op::Constant.into(),
-                3, // load 3
-                Op::Cons.into(),
-                Op::Constant.into(),
-                4, // load 2
-                Op::Cons.into(),
-                Op::Cons.into(),
-                Op::Constant.into(),
-                5, // load 1
-                Op::Cons.into(),
-                Op::DebugEnd.into(),
-            ]
-        );
     }
 }

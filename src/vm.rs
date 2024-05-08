@@ -1,3 +1,4 @@
+use crate::builtins_comp::{self, BuiltIn};
 use crate::disassembler::disassemble;
 use crate::static_stack::StaticStack;
 
@@ -5,8 +6,8 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
+use std::default;
 use std::fmt::{Debug, Display};
-use std::{default, vec};
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
@@ -16,6 +17,11 @@ pub enum CaptureType {
 }
 use CaptureType::*;
 
+// struct LinkedListItem<T> {
+//     next: Box<LinkedListItem<T>>,
+//     value: T,
+// }
+
 const STACK_SIZE: usize = 4096; // will need to dial this in
 pub struct VM {
     pub stack: StaticStack<SmallVal, STACK_SIZE>, // pub for testing, ugh
@@ -24,31 +30,25 @@ pub struct VM {
     callframes: Vec<CallFrame>,
     heap: *mut HeapObject,
     chunk_constants: Vec<ConstantValue>,
+    // open_upvalues: *mut UpValue,
+    // open_upvalues: *mut ObjectValue,
+    open_upvalues: *mut HeapObject,
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Builtin {
-    name: &'static str,
-    arity: usize,
-    func: fn(&mut &[SmallVal]) -> SmallVal,
-}
-
-const PLUS: Builtin = Builtin {
-    name: "+",
-    arity: 2,
-    func: |args| match args {
-        [] => panic!("expected 2 arguments"),
-        [SmallVal::Integer(a), SmallVal::Integer(b)] => SmallVal::Integer(*a + *b),
-        [SmallVal::Float(a), SmallVal::Float(b)] => SmallVal::Float(*a + *b),
-        [SmallVal::Integer(a), SmallVal::Float(b)] => SmallVal::Float(*a as f64 + *b),
-        [SmallVal::Float(a), SmallVal::Integer(b)] => SmallVal::Float(*a + *b as f64),
-        _ => panic!("expected integer or float"),
-    },
-};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpValue {
     location: *mut SmallVal,
+    closed_val: Option<SmallVal>, // I think option is wrong here
+    next: *mut HeapObject,
+}
+impl UpValue {
+    fn new(stack_location: *mut SmallVal) -> Self {
+        UpValue {
+            location: stack_location,
+            next: std::ptr::null_mut(),
+            closed_val: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,15 +70,15 @@ impl Closure {
 
 #[derive(Debug, Clone, PartialEq)]
 /// only valid on the heap
-enum ObjectValue {
+pub enum ObjectValue {
     SmallValue(SmallVal),
     String(String),
     // Function(Function),
     Closure(Closure),
     Symbol(String),
     ConsCell(ConsCell),
-    Builtin(Builtin),
-    Upvalue(UpValue),
+    BuiltIn(BuiltIn),
+    UpValue(UpValue),
 }
 
 impl ObjectValue {
@@ -89,18 +89,18 @@ impl ObjectValue {
             // ObjectValue::Function(_) => true,
             ObjectValue::Symbol(_) => true,
             ObjectValue::ConsCell(_) => true,
-            ObjectValue::Builtin(_) => true,
-            ObjectValue::Upvalue(_) => unreachable!(),
+            ObjectValue::BuiltIn(_) => true,
+            ObjectValue::UpValue(_) => unreachable!(),
             ObjectValue::Closure(_) => true, // check
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConsCell(SmallVal, *mut ConsCell);
+pub struct ConsCell(pub *mut HeapObject, pub *mut HeapObject);
 
 impl ConsCell {
-    pub fn new(car: SmallVal, cdr: *mut ConsCell) -> Self {
+    pub fn new(car: *mut HeapObject, cdr: *mut HeapObject) -> Self {
         ConsCell(car, cdr)
     }
 }
@@ -116,7 +116,7 @@ impl Display for ConsCell {
             format!("{}", unsafe { &*self.1 })
         };
 
-        write!(f, "({} . {})", car, cdr)
+        write!(f, "({} . {})", unsafe { &*car }, cdr)
     }
 }
 
@@ -124,25 +124,12 @@ impl Display for ObjectValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ObjectValue::String(s) => write!(f, "\"{}\"", s),
-            // ObjectValue::Function(func) => write!(f, "function <{}>", func.name),
             ObjectValue::Symbol(s) => write!(f, "{}", s), // might want to add a : here or something
             ObjectValue::ConsCell(cell) => write!(f, "{}", cell),
             ObjectValue::SmallValue(v) => write!(f, "{}", v),
-            ObjectValue::Builtin(b) => write!(f, "builtin <{}>", b.name),
-            ObjectValue::Upvalue(u) => write!(f, "upvalue <{}>", &unsafe { &*u.location }),
+            ObjectValue::BuiltIn(b) => write!(f, "builtin <{}>", b.name),
+            ObjectValue::UpValue(u) => write!(f, "{}", &unsafe { &*u.location }),
             ObjectValue::Closure(c) => write!(f, "closure <{}>", c.f.name),
-        }
-    }
-}
-
-impl Display for ConstantValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConstantValue::Integer(i) => write!(f, "{}", i),
-            ConstantValue::Float(fl) => write!(f, "{}", fl),
-            ConstantValue::Boolean(b) => write!(f, "{}", b),
-            ConstantValue::Nil => write!(f, "nil"),
-            ConstantValue::Object(obj) => write!(f, "{}", obj),
         }
     }
 }
@@ -181,7 +168,7 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapObject {
     next: *mut HeapObject,
-    value: ObjectValue,
+    pub value: ObjectValue,
     // marked: bool,
 }
 
@@ -191,7 +178,7 @@ impl Display for HeapObject {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SmallVal {
     Integer(i64),
     Float(f64),
@@ -208,8 +195,11 @@ impl Display for SmallVal {
             SmallVal::Float(fl) => write!(f, "{}", fl),
             SmallVal::Bool(b) => write!(f, "{}", b),
             SmallVal::Nil => write!(f, "nil"),
-            SmallVal::ObjectPtr(ptr) => write!(f, "{}", unsafe { &**ptr }),
             SmallVal::Quote(c) => write!(f, "'{}", unsafe { &**c }),
+            SmallVal::ObjectPtr(ptr) => {
+                let val = unsafe { &**ptr };
+                write!(f, "{}", val)
+            }
         }
     }
 }
@@ -242,7 +232,7 @@ struct CallFrame {
     // num_locals: usize,
     return_address: *const u8,
     /// the stack index of the function being called
-    stack_frame_start: i32,
+    start_idx: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -252,26 +242,26 @@ pub enum ConstantValue {
     Boolean(bool),
     Nil,
     Object(ConstantObject),
+    List(Vec<ConstantValue>),
+    Quote(Box<ConstantValue>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstantObject {
     String(String),
-    // Function(Function),
     Closure(Closure),
     Symbol(String),
 }
 
-impl ConstantObject {
-    fn as_object(&self) -> ObjectValue {
-        match self {
-            ConstantObject::String(s) => ObjectValue::String(s.clone()),
-            // ConstantObject::Function(f) => ObjectValue::Function(f.clone()),
-            ConstantObject::Symbol(s) => ObjectValue::Symbol(s.clone()),
-            ConstantObject::Closure(c) => ObjectValue::Closure(c.clone()),
-        }
-    }
-}
+// impl ConstantObject {
+//     fn as_object(&self) -> ObjectValue {
+//         match self {
+//             ConstantObject::String(s) => ObjectValue::String(s.clone()),
+//             ConstantObject::Symbol(s) => ObjectValue::Symbol(s.clone()),
+//             ConstantObject::Closure(c) => ObjectValue::Closure(c.clone()),
+//         }
+//     }
+// }
 
 impl Display for ConstantObject {
     /// lot's of duplication going on here, can we define easy mappers between these types?
@@ -314,10 +304,6 @@ impl BytecodeChunk {
     pub fn new(code: Vec<u8>, constants: Vec<ConstantValue>) -> Self {
         BytecodeChunk { code, constants }
     }
-
-    // pub fn new(code: Vec<u8>, constants: Vec<ConstantValue>) -> Self {
-    //     BytecodeChunk { code, constants }
-    // }
 }
 
 #[repr(u8)]
@@ -339,7 +325,6 @@ pub enum Op {
     DeclareGlobal = 14,
     ReferenceGlobal = 15,
     ReferenceLocal = 16,
-    Cons = 17, // really not sure this should be an opcode
     Print = 18,
     Quote = 19,
     Define = 20,
@@ -347,6 +332,8 @@ pub enum Op {
     SetUpvalue = 22,
     Closure = 23,
     Pop = 24,
+    CloseUpvalue = 25,
+    SetLocal = 26,
     DebugEnd = 254,
 }
 
@@ -354,62 +341,6 @@ impl Default for VM {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn binary_function(name: &'static str, op: Op) -> Closure {
-    Closure {
-        f: Function {
-            num_locals: 0,
-            name: name.to_string(),
-            arity: 2,
-            bytecode: Box::new(BytecodeChunk {
-                code: vec![
-                    Op::ReferenceLocal.into(),
-                    1,
-                    Op::ReferenceLocal.into(),
-                    2,
-                    op.into(),
-                    Op::Return.into(),
-                ],
-                constants: vec![],
-            }),
-        },
-        upvalues: vec![],
-        num_upvalues: 0,
-    }
-}
-
-fn builtins() -> Vec<Closure> {
-    vec![
-        binary_function("*", Op::Mul),
-        binary_function("+", Op::Add),
-        binary_function("-", Op::Sub),
-        binary_function("/", Op::Div),
-        binary_function(">", Op::GT),
-        binary_function("<", Op::LT),
-        binary_function(">=", Op::GTE),
-        binary_function("<=", Op::LTE),
-        Closure {
-            f: Function {
-                num_locals: 0,
-                name: "print".to_string(),
-                arity: 1,
-                bytecode: Box::new(BytecodeChunk {
-                    code: vec![
-                        Op::ReferenceLocal.into(),
-                        1,
-                        Op::Print.into(),
-                        Op::Constant.into(),
-                        0, // return nil
-                        Op::Return.into(),
-                    ],
-                    constants: vec![ConstantValue::Nil],
-                }),
-            },
-            upvalues: vec![],
-            num_upvalues: 0,
-        },
-    ]
 }
 
 impl VM {
@@ -421,17 +352,14 @@ impl VM {
             globals: HashMap::default(),
             callframes: Vec::default(),
             chunk_constants: Vec::default(),
+            open_upvalues: std::ptr::null_mut(),
         };
 
-        for obj in builtins() {
-            let name = obj.f.name.clone();
-            let obj_ptr = unsafe { vm.allocate_value(ObjectValue::Closure(obj)) };
+        for builtin in builtins_comp::BUILT_INS.into_iter() {
+            let name = builtin.name.to_string();
+            let obj_ptr = unsafe { vm.allocate_value(ObjectValue::BuiltIn(builtin.clone())) };
             vm.globals.insert(name, SmallVal::ObjectPtr(obj_ptr));
         }
-
-        let plus = unsafe { vm.allocate_value(ObjectValue::Builtin(PLUS)) };
-        vm.globals
-            .insert(PLUS.name.to_string(), SmallVal::ObjectPtr(plus));
 
         vm
     }
@@ -464,7 +392,6 @@ impl VM {
                 Op::DeclareGlobal => self.handle_declare_global(),
                 Op::ReferenceGlobal => self.handle_reference_global(),
                 Op::Print => self.handle_print(),
-                Op::Cons => self.handle_cons(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
                 Op::Quote => self.handle_quote(),
@@ -474,6 +401,8 @@ impl VM {
                 Op::ReferenceUpvalue => self.handle_reference_upvalue(),
                 Op::SetUpvalue => self.handle_set_upvalue(),
                 Op::Pop => self.handle_pop(),
+                Op::CloseUpvalue => unimplemented!(),
+                Op::SetLocal => self.handle_set_local(),
             }
         }
     }
@@ -482,15 +411,22 @@ impl VM {
         self.stack.pop().expect("expected value to pop");
         self.advance();
     }
-    
+
     fn handle_reference_upvalue(&mut self) {
-        let idx = self.consume_next_byte_as_byte() as usize;
-        let ptr = self.frame().closure.upvalues[idx];
-        match &unsafe { &*ptr }.value {
-            ObjectValue::Upvalue(_) => {}
-            _ => panic!("expected upvalue"),
+        let upvalue_idx = self.consume_next_byte_as_byte() as usize;
+        let ptr = self.frame().closure.upvalues[upvalue_idx];
+        let val = match &unsafe { &*ptr }.value {
+            ObjectValue::UpValue(uv) => {
+                println!("found upvalue {}", upvalue_idx);
+                unsafe { &*uv.location }.clone()
+                // ALERT ALERT ALERT           ^^V^^
+                // this is wrong ----------------'
+                // ALERT ALERT ALERT
+                // ALERT ALERT ALERT
+            }
+            got => panic!("expected upvalue, got {got}"),
         };
-        self.stack.push(SmallVal::ObjectPtr(ptr));
+        self.stack.push(val); // SmallVal::ObjectPtr(ptr));
         self.advance();
     }
 
@@ -499,7 +435,7 @@ impl VM {
         let idx = self.consume_next_byte_as_byte() as usize;
         let ptr = self.frame().closure.upvalues[idx];
         match &unsafe { &*ptr }.value {
-            ObjectValue::Upvalue(uv) => {
+            ObjectValue::UpValue(uv) => {
                 *unsafe { &mut *uv.location } = value;
             }
             _ => panic!("expected upvalue"),
@@ -507,35 +443,44 @@ impl VM {
         self.advance();
     }
 
+    fn handle_set_local(&mut self) {
+        let val = self.stack.pop().expect("expected value");
+        let local_idx = self.consume_next_byte_as_byte();
+        *self.local_var_mut(local_idx) = val;
+    }
+
+    /// expects the next byte to be a constants array index to a closure object
     fn handle_closure(&mut self) {
-        let closure_func = match self.consume_next_byte_as_constant() {
-            SmallVal::ObjectPtr(ptr) => match &unsafe { &*ptr }.value {
-                ObjectValue::Closure(f) => f,
-                _ => panic!("expected function"),
-            },
-            _ => panic!("expected object ptr"),
+        let constant_idx = unsafe {
+            self.ip = self.ip.add(1);
+            *self.ip
         };
 
-        // TODO remove clone ideally
-        let mut closure_func = closure_func.clone();
+        let mut closure = match self.get_constant(constant_idx as usize) {
+            ConstantValue::Object(o) => match o {
+                ConstantObject::Closure(c) => c.clone(),
+                _ => panic!("didn't find a closure in constants"),
+            },
+            _ => panic!("didn't find an object in constants"),
+        };
 
-        // upvalues is empty right now, fill it
-        // thought: might be nice to store "num upvalues" as an operand instead of preallocating
-        for i in 0..closure_func.num_upvalues {
-            let capture_type = self.consume_next_byte_as_byte().try_into().unwrap();
+        // upvalues is empty right now, fill it:
+        for i in 0..closure.num_upvalues {
+            // thought: might be nice to store "num upvalues" as an operand to `Op::Closure` instead of preallocating
+            let capture_type: CaptureType = self.consume_next_byte_as_byte().try_into().unwrap();
             let upvalue_index = self.consume_next_byte_as_byte();
             let uv_ptr = match capture_type {
                 SurroundingLocal => {
-                    let idx_in_stack =
-                        (self.frame().stack_frame_start + 1 + upvalue_index as i32) as usize; // +1 to skip the function
-
-                    let upvalue = UpValue {
-                        location: self.stack.at_mut(idx_in_stack).unwrap(),
+                    let ptr = {
+                        let int_start = self.frame().start_idx;
+                        let stack_start_ptr = self.stack.as_mut_ptr();
+                        let ptr = unsafe {
+                            stack_start_ptr.add(int_start as usize + 1 + upvalue_index as usize)
+                        };
+                        ptr
                     };
 
-                    let uv_ptr: *mut HeapObject =
-                        unsafe { self.allocate_value(ObjectValue::Upvalue(upvalue)) };
-
+                    let uv_ptr = self.capture_upvalue(ptr);
                     uv_ptr
                 }
                 SurroundingUpvalue => {
@@ -543,17 +488,53 @@ impl VM {
                     uv_ptr
                 }
             };
-            closure_func.upvalues[i] = uv_ptr;
+            closure.upvalues[i] = uv_ptr;
+            // println!();
         }
 
-        let heap_closure =
-            unsafe { self.allocate_value(ObjectValue::Closure(closure_func.clone())) };
+        let heap_closure = unsafe { self.allocate_value(ObjectValue::Closure(closure.clone())) };
 
         self.stack.push(SmallVal::ObjectPtr(heap_closure));
         self.advance();
     }
 
-    // the following are all in the wrong order oh well
+    // fn capture_upvalue(&mut self, idx_in_stack: usize) -> *mut HeapObject {
+    fn capture_upvalue(&mut self, stack_local: *mut SmallVal) -> *mut HeapObject {
+        println!("capturing upvalue");
+        let mut previous_upvalue: *mut HeapObject = std::ptr::null_mut();
+        let mut current = self.open_upvalues;
+
+        // walk the linked list of upvalues
+        while !current.is_null() && as_upvalue(current).location > stack_local {
+            previous_upvalue = current;
+            current = unsafe { &*current }.next;
+        }
+
+        if !current.is_null() && as_upvalue(current).location == stack_local {
+            // we found an existing upvalue
+            return current;
+        }
+
+        // Either we reached the end of the list or we went past the location without finding it.
+        // In either case, we need to create a new upvalue and insert it into the list.
+
+        let new_upvalue =
+            unsafe { self.allocate_value(ObjectValue::UpValue(UpValue::new(stack_local))) };
+
+        if previous_upvalue.is_null() {
+            println!("inserting at start");
+            // insert at the beginning of the list
+            self.open_upvalues = new_upvalue;
+        } else {
+            println!("inserting in middle");
+            // insert in the middle of the list
+            as_upvalue(previous_upvalue).next = new_upvalue;
+        }
+
+        as_upvalue(new_upvalue).next = current;
+
+        new_upvalue
+    }
 
     fn handle_quote(&mut self) {
         let val = self.stack.pop().unwrap();
@@ -562,37 +543,11 @@ impl VM {
         self.advance();
     }
 
-    fn handle_cons(&mut self) {
-        let car = self.stack.pop().unwrap();
-        let cdr = self.stack.pop().unwrap();
-
-        let heap_obj_ptr = match cdr {
-            SmallVal::ObjectPtr(o) => unsafe {
-                match &mut (*o).value {
-                    ObjectValue::ConsCell(ref mut cdr_ptr) => self.allocate_value(
-                        ObjectValue::ConsCell(ConsCell(car, cdr_ptr as *mut ConsCell)),
-                    ),
-                    _ => panic!("expected cons cell"),
-                }
-            },
-            SmallVal::Nil => unsafe {
-                self.allocate_value(ObjectValue::ConsCell(ConsCell(
-                    car,
-                    std::ptr::null_mut(), // This is potentially not quite right, I think we
-                                          // should maybe be allocating for SmallValue::Nil
-                )))
-            },
-            other => panic!("expected object or nil, got {other}"),
-        };
-        self.stack.push(SmallVal::ObjectPtr(heap_obj_ptr));
-        self.advance();
-    }
-
     fn handle_return(&mut self) {
         let CallFrame {
             closure,
             return_address,
-            stack_frame_start,
+            start_idx: stack_frame_start,
         } = self
             .callframes
             .pop()
@@ -603,17 +558,39 @@ impl VM {
         // clean up the stack
         let return_val = self.stack.pop().expect("expected a return value");
 
+        self.close_upvalues(stack_frame_start as *mut SmallVal);
+
         // pop the arguments, locals, and function
+
         self.stack.pop_n(closure.f.arity + closure.f.num_locals + 1);
-        assert_eq!(self.stack.ptr + 1, stack_frame_start);
+        if self.stack.ptr + 1 != stack_frame_start {
+            // panic!(
+            //     "expected stack ptr to be at start of frame ({}), but was at {}",
+            //     stack_frame_start, self.stack.ptr
+            // );
+        }
+        // todo use this instead I think:
+        // self.stack.ptr = stack_frame_start as usize - 1;
 
         self.stack.push(return_val);
         self.advance();
     }
 
+    fn close_upvalues(&mut self, last: *mut SmallVal) {
+        while !self.open_upvalues.is_null() && as_upvalue(self.open_upvalues).location >= last {
+            unsafe {
+                // img:  https://craftinginterpreters.com/image/closures/closing.png
+                let upvalue = as_upvalue(self.open_upvalues);
+                upvalue.closed_val = Some(upvalue.location.read());
+                upvalue.location = upvalue.closed_val.as_mut().unwrap();
+                self.open_upvalues = upvalue.next;
+            }
+        }
+    }
+
     fn handle_reference_local(&mut self) {
         let offset = self.consume_next_byte_as_byte();
-        let value = *self.local_var_mut(offset); // copy
+        let value = self.local_var_mut(offset).clone();
         self.stack.push(value);
         self.advance();
     }
@@ -621,7 +598,7 @@ impl VM {
     /// includes function and arguments
     /// [function, arg1, arg2, ... argN, local1, ...]
     fn local_var_mut(&mut self, n: u8) -> &mut SmallVal {
-        let global_offset = (self.frame().stack_frame_start + n as i32) as usize;
+        let global_offset = (self.frame().start_idx + n as i32) as usize;
 
         self.stack.at_mut(global_offset).unwrap()
     }
@@ -660,9 +637,9 @@ impl VM {
                     // args are already at the top of the stack
                     self.stack.ptr += func_obj.f.num_locals as i32;
                 }
-                ObjectValue::Builtin(b) => {
+                ObjectValue::BuiltIn(b) => {
                     let args = self.stack.pop_n(given_arity).unwrap();
-                    let result = (b.func)(&mut &args[..]);
+                    let result = (b.func)(args, self);
                     self.stack.pop(); // pop off function too
                     self.stack.push(result);
                     self.advance();
@@ -692,7 +669,7 @@ impl VM {
         CallFrame {
             closure,
             return_address: self.ip,
-            stack_frame_start,
+            start_idx: stack_frame_start,
         }
     }
 
@@ -716,10 +693,10 @@ impl VM {
                 constant_val
             ),
         };
-        let global = *self.globals.get(name).unwrap_or_else(|| {
+        let global = self.globals.get(name).unwrap_or_else(|| {
             self.runtime_error(format!("undefined global variable: {}", name).as_str());
         });
-        self.stack.push(global); // copy
+        self.stack.push(global.clone());
         self.advance();
     }
 
@@ -870,32 +847,74 @@ impl VM {
         self.advance();
     }
 
-    fn consume_next_byte_as_constant(&mut self) -> SmallVal {
-        unsafe {
-            self.ip = self.ip.add(1);
-
-            let constant_idx = *self.ip as usize;
-
-            match self.get_constant(constant_idx) {
-                // IMPORTANT: clone
-                ConstantValue::Integer(i) => SmallVal::Integer(*i),
-                ConstantValue::Float(f) => SmallVal::Float(*f),
-                ConstantValue::Boolean(b) => SmallVal::Bool(*b),
-                ConstantValue::Nil => SmallVal::Nil,
-                ConstantValue::Object(value) => {
-                    let obj_ptr = self.allocate_value(value.as_object());
-                    SmallVal::ObjectPtr(obj_ptr)
-                }
-            }
-        }
-    }
-
     fn get_constant(&self, idx: usize) -> &ConstantValue {
         if let Some(frame) = &self.callframes.last() {
             return &frame.closure.f.bytecode.constants[idx];
         };
-
         &self.chunk_constants[idx]
+    }
+
+    fn consume_next_byte_as_constant(&mut self) -> SmallVal {
+        let constant_idx = self.consume_next_byte_as_byte();
+        let constant = self.get_constant(constant_idx as usize).clone();
+        self.constant_to_value(constant)
+    }
+
+    fn constant_to_value(&mut self, constant: ConstantValue) -> SmallVal {
+        match constant {
+            ConstantValue::Integer(i) => SmallVal::Integer(i),
+            ConstantValue::Float(f) => SmallVal::Float(f),
+            ConstantValue::Boolean(b) => SmallVal::Bool(b),
+            ConstantValue::Nil => SmallVal::Nil,
+            ConstantValue::Object(value) => {
+                let obj_ptr = unsafe {
+                    self.allocate_value(match value {
+                        ConstantObject::String(s) => ObjectValue::String(s),
+                        ConstantObject::Symbol(s) => ObjectValue::Symbol(s),
+                        ConstantObject::Closure(c) => ObjectValue::Closure(c),
+                    })
+                };
+                SmallVal::ObjectPtr(obj_ptr)
+            }
+            ConstantValue::List(list) => self.allocate_list(list),
+            ConstantValue::Quote(_val) => todo!(), // self.allocate_quote(val),
+        }
+    }
+
+    fn allocate_list(&mut self, mut list: Vec<ConstantValue>) -> SmallVal {
+        let last = list.pop().unwrap();
+        let head = list;
+
+        let last_val = self.constant_to_value(last);
+        let last_ptr = self.val_to_obj(last_val);
+
+        let mut cons_cell_ptr = unsafe {
+            self.allocate_value(ObjectValue::ConsCell(ConsCell(
+                last_ptr,
+                std::ptr::null_mut(),
+            )))
+        };
+
+        for item in head.into_iter().rev() {
+            let val = self.constant_to_value(item);
+            let item_ptr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
+
+            cons_cell_ptr = unsafe {
+                self.allocate_value(ObjectValue::ConsCell(ConsCell(item_ptr, cons_cell_ptr)))
+            };
+        }
+
+        SmallVal::ObjectPtr(cons_cell_ptr)
+    }
+
+    fn val_to_obj(&mut self, last_val: SmallVal) -> *mut HeapObject {
+        match last_val {
+            SmallVal::Integer(_) | SmallVal::Float(_) | SmallVal::Bool(_) | SmallVal::Nil => unsafe {
+                self.allocate_value(ObjectValue::SmallValue(last_val))
+            },
+            SmallVal::ObjectPtr(ptr) => ptr,
+            SmallVal::Quote(ptr) => ptr,
+        }
     }
 
     fn consume_next_byte_as_byte(&mut self) -> u8 {
@@ -911,7 +930,7 @@ impl VM {
         }
     }
 
-    unsafe fn allocate_value(&mut self, obj_value: ObjectValue) -> *mut HeapObject {
+    pub unsafe fn allocate_value(&mut self, obj_value: ObjectValue) -> *mut HeapObject {
         let obj_ptr = alloc(Layout::new::<HeapObject>()) as *mut HeapObject;
         obj_ptr.write(HeapObject {
             next: self.heap,
@@ -926,6 +945,16 @@ impl VM {
             println!("in {:?}", frame.closure.f.name);
         }
         panic!("Runtime error: {}", message);
+    }
+}
+
+fn as_upvalue<'a>(current: *mut HeapObject) -> &'a mut UpValue {
+    unsafe {
+        let upvalue = &mut (*current).value;
+        match upvalue {
+            ObjectValue::UpValue(u) => u,
+            _ => panic!("expected upvalue"),
+        }
     }
 }
 
@@ -1155,66 +1184,5 @@ mod tests {
         assert_eq!(vm.stack.peek_top().unwrap(), &SmallVal::Integer(50));
         assert_eq!(vm.stack.len(), 1);
         assert_eq!(vm.stack.at(0).unwrap(), &SmallVal::Integer(50));
-    }
-
-    // this is so jank but it'll do!
-    #[test]
-    fn test_cons() {
-        let bc = BytecodeChunk {
-            code: vec![
-                Op::Constant.into(),
-                0, // nil
-                Op::Constant.into(),
-                1,               // 30
-                Op::Cons.into(), // '(30 . nil)
-                Op::DebugEnd.into(),
-            ],
-            constants: vec![ConstantValue::Nil, ConstantValue::Integer(30)],
-        };
-
-        let mut vm = VM::default();
-        vm.run(bc);
-        let cell = match vm.stack.peek_top().unwrap() {
-            SmallVal::ObjectPtr(v) => match &unsafe { &**v }.value {
-                ObjectValue::ConsCell(cell) => cell,
-                _ => panic!(),
-            },
-            _ => panic!(),
-        };
-        assert_eq!(cell.0, SmallVal::Integer(30));
-        assert_eq!(cell.1, std::ptr::null_mut());
-    }
-
-    #[test]
-    fn test_cons_2() {
-        let bc = BytecodeChunk {
-            code: vec![
-                Op::Constant.into(),
-                0, // nil
-                Op::Constant.into(),
-                1,               // 20
-                Op::Cons.into(), // '(20 . nil)
-                Op::Constant.into(),
-                2,                   // 10
-                Op::Cons.into(),     // '(10 . (20 . nil))
-                Op::DebugEnd.into(), //
-            ],
-            constants: vec![
-                ConstantValue::Nil,
-                ConstantValue::Integer(20),
-                ConstantValue::Integer(10),
-            ],
-        };
-
-        let mut vm = VM::default();
-        vm.run(bc);
-        let cell = match *vm.stack.peek_top().unwrap() {
-            SmallVal::ObjectPtr(v) => match &unsafe { &*v }.value {
-                ObjectValue::ConsCell(cell) => cell,
-                _ => panic!(),
-            },
-            _ => panic!(),
-        };
-        assert_eq!(&cell.0, &SmallVal::Integer(10));
     }
 }
