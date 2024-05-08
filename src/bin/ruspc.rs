@@ -6,8 +6,8 @@ use rusp::vm::VM;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    match &args[..] {
-        [_, file] => interpret(file),
+    match args[..] {
+        [_, ref file] => interpret(file),
         [_] => repl(),
         _ => panic!("Usage: ruspc [filename]"),
     }

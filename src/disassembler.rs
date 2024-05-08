@@ -75,7 +75,7 @@ pub fn disassemble(bc: &BytecodeChunk) -> String {
             Op::GTE => "GTE".to_string(),
             Op::LTE => "LTE".to_string(),
             Op::Print => "PRINT".to_string(),
-            Op::Quote => "QUOTE".to_string(),
+            // Op::Quote => "QUOTE".to_string(),
             Op::ReferenceUpvalue => unimplemented!(),
             Op::SetUpvalue => unimplemented!(),
             Op::Closure => {

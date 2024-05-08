@@ -154,9 +154,9 @@ impl Compiler {
                     self.compile_symbol_as_reference(sym);
                 }
                 SrcSexpr::Bool(_) | SrcSexpr::Int(_) | SrcSexpr::Float(_) | SrcSexpr::String(_) => {
-                    self.compile_self_evaluation(sexpr, 0)
+                    self.compile_self_evaluation(sexpr)
                 }
-                SrcSexpr::Quote(_) => self.compile_self_evaluation(sexpr, 1),
+                SrcSexpr::Quote(_) => self.compile_self_evaluation(sexpr),
                 SrcSexpr::List(_) => {
                     unreachable!("this should have been handled by the structural parser")
                 }
@@ -367,7 +367,7 @@ impl Compiler {
         self.code_push(idx);
     }
 
-    fn compile_self_evaluation(&mut self, sexpr: SrcSexpr, quote_level: usize) {
+    fn compile_self_evaluation(&mut self, sexpr: SrcSexpr) {
         match sexpr {
             SrcSexpr::Bool(x) => {
                 self.compile_constant(ConstantValue::Boolean(x));
@@ -387,17 +387,11 @@ impl Compiler {
             // NOTE this is a literal sexpr list: `'()`, not a list constructor: `(list 1 2 3)`. The latter is a regular form
             SrcSexpr::List(sexprs) => {
                 let const_sexprs = sexprs.into_iter().map(Into::into).collect();
-
                 self.compile_constant(ConstantValue::List(const_sexprs))
             }
             SrcSexpr::Quote(quoted_sexpr) => {
-                self.compile_self_evaluation(*quoted_sexpr, quote_level + 1);
-                // this is kinda hacky:
-                // The first level of quoting is handled by the compiler, by compiling, for example, `'x` to the literal symbol `x`
-                // in the case of `''x`, the first quote is handled by the compiler, and the second quote is handled here:
-                if quote_level >= 2 {
-                    self.code_push(Op::Quote.into());
-                }
+                let const_sexpr = (*quoted_sexpr).into();
+                self.compile_constant(ConstantValue::Quote(Box::new(const_sexpr)));
             }
         }
     }

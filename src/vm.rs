@@ -73,7 +73,6 @@ impl Closure {
 pub enum ObjectValue {
     SmallValue(SmallVal),
     String(String),
-    // Function(Function),
     Closure(Closure),
     Symbol(String),
     ConsCell(ConsCell),
@@ -91,7 +90,7 @@ impl ObjectValue {
             ObjectValue::ConsCell(_) => true,
             ObjectValue::BuiltIn(_) => true,
             ObjectValue::UpValue(_) => unreachable!(),
-            ObjectValue::Closure(_) => true, // check
+            ObjectValue::Closure(_) => true,
         }
     }
 }
@@ -226,10 +225,6 @@ impl default::Default for SmallVal {
 #[derive(Debug, Clone, PartialEq)]
 struct CallFrame {
     closure: Closure,
-    // name: String,
-    // arity: usize,
-    // constants: Vec<ConstantValue>,
-    // num_locals: usize,
     return_address: *const u8,
     /// the stack index of the function being called
     start_idx: i32,
@@ -326,14 +321,14 @@ pub enum Op {
     ReferenceGlobal = 15,
     ReferenceLocal = 16,
     Print = 18,
-    Quote = 19,
-    Define = 20,
-    ReferenceUpvalue = 21,
-    SetUpvalue = 22,
-    Closure = 23,
-    Pop = 24,
-    CloseUpvalue = 25,
-    SetLocal = 26,
+    // Quote = 19,
+    Define = 19,
+    ReferenceUpvalue = 20,
+    SetUpvalue = 21,
+    Closure = 22,
+    Pop = 23,
+    CloseUpvalue = 24,
+    SetLocal = 25,
     DebugEnd = 254,
 }
 
@@ -394,7 +389,7 @@ impl VM {
                 Op::Print => self.handle_print(),
                 Op::ReferenceLocal => self.handle_reference_local(),
                 Op::Return => self.handle_return(),
-                Op::Quote => self.handle_quote(),
+                // Op::Quote => self.handle_quote(),
                 Op::Define => self.handle_local_define(),
                 Op::DebugEnd => return,
                 Op::Closure => self.handle_closure(),
@@ -536,12 +531,12 @@ impl VM {
         new_upvalue
     }
 
-    fn handle_quote(&mut self) {
-        let val = self.stack.pop().unwrap();
-        let addr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
-        self.stack.push(SmallVal::Quote(addr));
-        self.advance();
-    }
+    // fn handle_quote(&mut self) {
+    //     let val = self.stack.pop().unwrap();
+    //     let addr = unsafe { self.allocate_value(ObjectValue::SmallValue(val)) };
+    //     self.stack.push(SmallVal::Quote(addr));
+    //     self.advance();
+    // }
 
     fn handle_return(&mut self) {
         let CallFrame {
@@ -560,14 +555,13 @@ impl VM {
 
         self.close_upvalues(stack_frame_start as *mut SmallVal);
 
-        // pop the arguments, locals, and function
-
+        // pop the           arguments,       locals, and      function
         self.stack.pop_n(closure.f.arity + closure.f.num_locals + 1);
         if self.stack.ptr + 1 != stack_frame_start {
-            // panic!(
-            //     "expected stack ptr to be at start of frame ({}), but was at {}",
-            //     stack_frame_start, self.stack.ptr
-            // );
+            panic!(
+                "expected stack ptr to be at start of frame ({}), but was at {}",
+                stack_frame_start, self.stack.ptr
+            );
         }
         // todo use this instead I think:
         // self.stack.ptr = stack_frame_start as usize - 1;
@@ -877,7 +871,11 @@ impl VM {
                 SmallVal::ObjectPtr(obj_ptr)
             }
             ConstantValue::List(list) => self.allocate_list(list),
-            ConstantValue::Quote(_val) => todo!(), // self.allocate_quote(val),
+            ConstantValue::Quote(constant) => {
+                let val = self.constant_to_value(*constant);
+                let obj_ptr = self.val_to_obj(val);
+                SmallVal::Quote(obj_ptr)
+            }
         }
     }
 
