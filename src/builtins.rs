@@ -1,24 +1,20 @@
-use crate::parser::Sexpr;
+use crate::sexpr::LispValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltIn {
-    // pub name: &'static str,
     pub symbol: &'static str,
-    eval: fn(&[Sexpr]) -> Result<Sexpr, String>,
+    eval: fn(&[LispValue]) -> Result<LispValue, String>,
 }
 
 impl BuiltIn {
-    pub fn eval(&self, args: &[Sexpr]) -> Result<Sexpr, String> {
+    pub fn eval(&self, args: &[LispValue]) -> Result<LispValue, String> {
         (self.eval)(args)
     }
 }
 
 const LIST: BuiltIn = BuiltIn {
     symbol: "list",
-    eval: |args| Ok(Sexpr::List {
-        quasiquote: false,
-        sexprs: args.to_vec(),
-    }),
+    eval: |args| Ok(LispValue::List(args.to_vec())),
 };
 
 const CONS: BuiltIn = BuiltIn {
@@ -28,18 +24,15 @@ const CONS: BuiltIn = BuiltIn {
             return Err("cons must be called with two arguments".to_string());
         }
         match &args[1] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => {
+            LispValue::List(list) => {
                 let mut new = list.clone();
                 new.insert(0, args[0].clone());
-                Ok(Sexpr::List {
-                    quasiquote: false,
-                    sexprs: new,
-                })
+                Ok(LispValue::List(new))
             }
-            a => Err(format!("cons must be called with a list as the second argument, got {:#?}", a)),
+            a => Err(format! {
+                "cons must be called with a list as the second argument, got {:#?}",
+                a
+            }),
         }
     },
 };
@@ -51,10 +44,7 @@ const CAR: BuiltIn = BuiltIn {
             return Err("car must be called with one argument".to_string());
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => Ok(list[0].clone()),
+            LispValue::List(list) => Ok(list[0].clone()),
             _ => Err("car must be called with a list as the first argument".to_string()),
         }
     },
@@ -64,19 +54,16 @@ const CDR: BuiltIn = BuiltIn {
     symbol: "cdr",
     eval: |args| {
         if args.len() != 1 {
-            return Err(format!("cdr must be called with one argument, got {}", args.len()));
+            return Err(format!(
+                "cdr must be called with one argument, got {}",
+                args.len()
+            ));
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => {
+            LispValue::List(list) => {
                 let mut new = list.clone();
                 new.remove(0);
-                Ok(Sexpr::List {
-                    quasiquote: false,
-                    sexprs: new,
-                })
+                Ok(LispValue::List(new))
             }
             _ => Err("cdr must be called with a list as the first argument".to_string()),
         }
@@ -89,12 +76,12 @@ const ADD: BuiltIn = BuiltIn {
         let mut out = 0;
         for arg in args {
             match arg {
-                Sexpr::Int(i) => out += i,
+                LispValue::Int(i) => out += i,
                 // Sexpr::Float(i) => out += i as f64,
                 _ => return Err("add must be called with a list of integers".to_string()),
             }
         }
-        Ok(Sexpr::Int(out))
+        Ok(LispValue::Int(out))
     },
 };
 
@@ -102,18 +89,18 @@ const SUB: BuiltIn = BuiltIn {
     symbol: "-",
     eval: |args| {
         let mut init = match args[0] {
-            Sexpr::Int(i) => i,
+            LispValue::Int(i) => i,
             // Sexpr::Float(i) => i as f64,
             _ => return Err("sub must be called with a list of integers".to_string()),
         };
         for arg in &args[1..] {
             match arg {
-                Sexpr::Int(j) => init -= j,
+                LispValue::Int(j) => init -= j,
                 // Sexpr::Float(j) => init -= j as f64,
                 _ => return Err("sub must be called with a list of integers".to_string()),
             }
         }
-        Ok(Sexpr::Int(init))
+        Ok(LispValue::Int(init))
     },
 };
 
@@ -123,12 +110,12 @@ const MUL: BuiltIn = BuiltIn {
         let mut out = 1;
         for arg in args {
             match arg {
-                Sexpr::Int(i) => out *= i,
+                LispValue::Int(i) => out *= i,
                 // Sexpr::Float(i) => out *= i as f64,
                 _ => return Err("mul must be called with a list of integers".to_string()),
             }
         }
-        Ok(Sexpr::Int(out))
+        Ok(LispValue::Int(out))
     },
 };
 
@@ -136,18 +123,18 @@ const DIV: BuiltIn = BuiltIn {
     symbol: "/",
     eval: |args| {
         let mut init = match args[0] {
-            Sexpr::Int(i) => i,
+            LispValue::Int(i) => i,
             // Sexpr::Float(i) => i as f64,
             _ => return Err("div must be called with a list of integers".to_string()),
         };
         for arg in &args[1..] {
             match arg {
-                Sexpr::Int(j) => init /= j,
+                LispValue::Int(j) => init /= j,
                 // Sexpr::Float(j) => init /= j as f64,
                 _ => return Err("div must be called with a list of integers".to_string()),
             }
         }
-        Ok(Sexpr::Int(init))
+        Ok(LispValue::Int(init))
     },
 };
 
@@ -158,10 +145,7 @@ const EMPTY: BuiltIn = BuiltIn {
             return Err("empty must be called with one argument".to_string());
         }
         match &args[0] {
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: list,
-            } => Ok(Sexpr::Bool(list.is_empty())),
+            LispValue::List(list) => Ok(LispValue::Bool(list.is_empty())),
             _ => Err("empty must be called with a list as the first argument".to_string()),
         }
     },
@@ -174,13 +158,12 @@ const INC: BuiltIn = BuiltIn {
             return Err("inc must be called with one argument".to_string());
         }
         match &args[0] {
-            Sexpr::Int(i) => Ok(Sexpr::Int(i + 1)),
+            LispValue::Int(i) => Ok(LispValue::Int(i + 1)),
             // Sexpr::Float(i) => Sexpr::Float(i + 1.0),
             _ => Err("inc must be called with an integer".to_string()),
         }
     },
 };
-
 
 const PRINT: BuiltIn = BuiltIn {
     symbol: "print",
@@ -188,7 +171,7 @@ const PRINT: BuiltIn = BuiltIn {
         for arg in args {
             println!("{}", arg);
         }
-        Ok(Sexpr::Bool(true)) // TODO introduce a new type for void / unit
+        Ok(LispValue::Nil)
     },
 };
 
@@ -199,11 +182,11 @@ const EQ: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i == j)),
+            (LispValue::Int(i), LispValue::Int(j)) => Ok(LispValue::Bool(i == j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
 const GT: BuiltIn = BuiltIn {
@@ -213,11 +196,11 @@ const GT: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i > j)),
+            (LispValue::Int(i), LispValue::Int(j)) => Ok(LispValue::Bool(i > j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
 const LT: BuiltIn = BuiltIn {
@@ -227,14 +210,16 @@ const LT: BuiltIn = BuiltIn {
             return Err("= must be called with two arguments".to_string());
         }
         match (&args[0], &args[1]) {
-            (Sexpr::Int(i), Sexpr::Int(j)) => Ok(Sexpr::Bool(i < j)),
+            (LispValue::Int(i), LispValue::Int(j)) => Ok(LispValue::Bool(i < j)),
             // (Sexpr::Float(i), Sexpr::Float(j)) => Sexpr::Bool(i == j),
             _ => Err("= must be called with two integers".to_string()),
         }
-    }
+    },
 };
 
-pub const BUILTINTS: [BuiltIn; 14] = [CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT];
+pub const BUILT_INS: [BuiltIn; 14] = [
+    CONS, CAR, CDR, LIST, ADD, SUB, MUL, DIV, EMPTY, INC, PRINT, EQ, GT, LT,
+];
 
 #[cfg(test)]
 mod tests {
@@ -243,18 +228,12 @@ mod tests {
     #[test]
     fn test_cons() -> Result<(), String> {
         let args = vec![
-            Sexpr::Int(1),
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: vec![Sexpr::Int(2), Sexpr::Int(3)],
-            },
+            LispValue::Int(1),
+            LispValue::List(vec![LispValue::Int(2), LispValue::Int(3)]),
         ];
         assert_eq!(
             CONS.eval(&args)?,
-            Sexpr::List {
-                quasiquote: false,
-                sexprs: vec![Sexpr::Int(1), Sexpr::Int(2), Sexpr::Int(3),]
-            }
+            LispValue::List(vec![LispValue::Int(1), LispValue::Int(2), LispValue::Int(3),])
         );
         Ok(())
     }
