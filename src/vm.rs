@@ -874,6 +874,7 @@ impl VM {
                         ConstantObject::Closure(c) => ObjectValue::Closure(c),
                     })
                 };
+                #[cfg(feature = "gc_debug")]
                 println!("allocated ptr to {}", &unsafe { &*obj_ptr });
                 SmallVal::ObjectPtr(obj_ptr)
             }

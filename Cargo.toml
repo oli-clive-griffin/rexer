@@ -1,5 +1,5 @@
 [features]
-gc_debug = []
+gc_debug = [] # Enable debug output for the garbage collector
 
 [package]
 name = "rusp"
